@@ -68,7 +68,7 @@ RUN apt-get update && apt-get install -y \
 ## Add user & enable sudo
 
 ARG USERNAME=devpod
-ARG USER_UID=1001
+ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 
 RUN groupadd --gid $USER_GID ${USERNAME} \

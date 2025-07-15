@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fabrique"
+version = "0.1.2"
+description = "Research-friendly implementation of LLMs in JAX"
+authors = [
+  { name="Andrei Zhabinski", email="andrei.zhabinski@gmail.com" },
+]
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.10.0"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "flax>=0.8.4",
+    "optax>=0.2.2",
+    "tokenizers>=0.19.1",
+    "safetensors>=0.4.3",
+    "huggingface-hub>=0.23.1",
+    "multimethod>=2.0",
+    "Jinja2>=3.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/dfdx/fabrique"
+
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ipython",
+    "mypy>=1.9.0",
+    "mypy-extensions>=1.0.0",
+    "black",
+    "isort",
+]
+
+[tool.setuptools.packages]
+find = {}
+
+
+[tool.mypy]
+
+[[tool.mypy.overrides]]
+module = "tokenizers.*,huggingface_hub.*,transformers.*,datasets.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "optax.*"
+ignore_missing_imports = true

@@ -1,11 +1,10 @@
-# devel version with DNN is required for JIT compilation in some cases
-# FROM nvidia/cuda:12.4.1-cudnn9-devel-ubuntu22.04 AS build-base
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS build-base
+# FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS build-base
+FROM ubuntu:24.04 AS build-base
+RUN userdel -r ubuntu
 
 
 ## Basic system setup
 
-ENV user=devpod
 SHELL ["/bin/bash", "-c"]
 
 
@@ -20,7 +19,7 @@ ENV LANGUAGE=en_US.UTF-8 \
     LC_CTYPE=en_US.UTF-8 \
     LC_MESSAGES=en_US.UTF-8
 
-RUN apt update && apt install -y --no-install-recommends \
+RUN apt-get update && apt install -y --no-install-recommends \
         build-essential \
         ca-certificates \
         curl \
@@ -51,61 +50,66 @@ RUN apt update && apt install -y --no-install-recommends \
     && update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
     && apt clean
 
-
 ## System packages
 
-RUN apt-get update
-RUN apt-get install -y git openssh-server
-RUN apt-get install -y python3 python3-pip python-is-python3
-# RUN apt-get install -y jq
-# RUN pip install yq==3.1.1
+ENV PYTHONFAULTHANDLER=1 \
+    PYTHONHASHSEED=random \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y \
+    git \
+    openssh-server \
+    python-is-python3 \
+    python3 \
+    python3-pip \
+    && apt-get clean \
+    && pip install uv --break-system-packages
 
 ## Add user & enable sudo
 
-RUN useradd -ms /bin/bash ${user}
-RUN usermod -aG sudo ${user}
+ARG USERNAME=devpod
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
 
-RUN apt-get install -y sudo
-RUN echo "${user} ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+RUN groupadd --gid $USER_GID ${USERNAME} \
+    && useradd --uid $USER_UID --gid $USER_GID -ms /bin/bash ${USERNAME} \
+    && usermod -aG sudo ${USERNAME} \
+    && apt-get install -y sudo \
+    && apt-get clean \
+    && echo "${USERNAME} ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers \
+    && echo 'export PATH=${PATH}:~/.local/bin' >> /home/${USERNAME}/.bashrc
 
-USER ${user}
-WORKDIR /home/${user}
-
+USER ${USERNAME}
+WORKDIR /home/${USERNAME}
 
 ## Python packages
 
-RUN pip install --upgrade pip
-RUN pip install wheel
+# avoid uv warning related to Windows/Linux compatibility issues
+ENV UV_LINK_MODE=copy
+
+# create globally visible venv
+# also set $VIRTUAL_ENV which will be used by uv
+ENV VIRTUAL_ENV=/venv
+RUN sudo mkdir "$VIRTUAL_ENV" \
+    && sudo chown -R ${USERNAME}:${USERNAME} "$VIRTUAL_ENV"
+
+# install the project
+ENV BUILD_DIR=/app
+COPY --chown=${USERNAME}:${USERNAME} . "$BUILD_DIR"
 
 
-# add specific version of JAX directry to the container
-RUN pip install jax["cuda12"]==0.5.0
+WORKDIR "${BUILD_DIR}"
+RUN uv lock && uv sync --active
+WORKDIR /home/${USERNAME}
 
-COPY --chown=${user}:${user} ./pyproject.toml /home/${user}/
-RUN pip install pip-tools
-RUN python -m piptools compile --extra dev -o requirements.txt pyproject.toml
-RUN pip install -r requirements.txt
-
+# Install specific variation of JAX, but don't add to prooject dependencies
+RUN uv pip install jax[cuda]==0.6.0
 
 
-## Post-install setup
-
-RUN mkdir -p ${HOME}/.cache
-RUN echo 'export PATH=${PATH}:${HOME}/.local/bin' >> ${HOME}/.bashrc
-
-# ensure libraries see CUDA
-RUN echo 'export LD_LIBRARY_PATH=/usr/local/cuda-11/lib64:/usr/lib/x86_64-linux-gnu/:${LD_LIBRARY_PATH}' >> ${HOME}/.bashrc
-RUN echo 'export PATH=/usr/local/cuda/bin:${PATH}' >> ${HOME}/.bashrc
-
-
+###########################################################
 FROM build-base AS build-dev
 
-# RUN pip install pytest ipython mypy black isort
-# RUN pip install tensorflow tensorboard-plugin-profile
+## Other tools
 
-FROM build-dev AS build-test
 
-# RUN pip install torch
-# RUN pip install transformers
-
-CMD ["echo", "Explore!"]
+CMD ["echo", "Create!"]

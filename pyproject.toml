@@ -1,57 +1,36 @@
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "fabrique"
 version = "0.1.2"
-description = "Research-friendly implementation of LLMs in JAX"
-authors = [
-  { name="Andrei Zhabinski", email="andrei.zhabinski@gmail.com" },
-]
+description = "Add your description here"
 readme = "README.md"
-license = {file = "LICENSE"}
-requires-python = ">=3.10.0"
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: Apache Software License",
-    "Operating System :: OS Independent",
-]
-
+requires-python = ">=3.12"
 dependencies = [
-    "flax>=0.8.4",
-    "optax>=0.2.2",
-    "tokenizers>=0.19.1",
-    "safetensors>=0.4.3",
-    "huggingface-hub>=0.23.1",
+    "flax>=0.10.7",
+    "huggingface-hub>=0.33.4",
+    "jinja2>=3.1.6",
     "multimethod>=2.0",
-    "Jinja2>=3.1",
+    "optax>=0.2.5",
+    "safetensors>=0.5.3",
+    "tokenizers>=0.21.2",
 ]
 
-[project.urls]
-Homepage = "https://github.com/dfdx/fabrique"
-
-
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
-    "pytest",
-    "ipython",
-    "mypy>=1.9.0",
-    "mypy-extensions>=1.0.0",
-    "black",
-    "isort",
+    "black>=25.1.0",
+    "ipython>=9.2.0",
+    "isort>=6.0.1",
+    "mypy>=1.15.0",
+    "pytest>=8.4.1",
+]
+extra = [
+    "httpx>=0.28.1",
+    "pandas>=2.2.3",
+    "pillow>=11.2.1",
+    "playwright>=1.52.0",
+    "pyarrow>=20.0.0",
+    # "webdriver-manager>=4.0.2",
 ]
 
-[tool.setuptools.packages]
-find = {}
 
-
-[tool.mypy]
-
-[[tool.mypy.overrides]]
-module = "tokenizers.*,huggingface_hub.*,transformers.*,datasets.*"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "optax.*"
-ignore_missing_imports = true
+[tool.uv]
+default-groups = ["dev", "extra"]

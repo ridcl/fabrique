@@ -3,7 +3,7 @@
 	"build": {
 		"context": "..",
 		"dockerfile": "../Dockerfile",
-		"target": "build-test"
+		"target": "build-dev"
 	},
 
 	"mounts": [
@@ -12,8 +12,10 @@
 	],
 
 	"containerEnv": {
+		"PYTHONPATH": "src",
 		"HF_TOKEN": "${localEnv:HF_TOKEN_PERSONAL}"
 	},
 
 	"runArgs": ["--gpus", "all"]
+
 }

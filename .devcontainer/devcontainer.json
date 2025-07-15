@@ -3,7 +3,7 @@
 	"build": {
 		"context": "..",
 		"dockerfile": "../Dockerfile",
-		"target": "build-test"
+		"target": "build-dev"
 	},
 
 	"mounts": [
@@ -16,4 +16,5 @@
 	},
 
 	"runArgs": ["--gpus", "all"]
+
 }

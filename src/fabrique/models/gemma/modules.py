@@ -415,6 +415,132 @@ class FeedForward(nnx.Module):
         return outputs
 
 
+class Block(nnx.Module):
+    """Transformer block."""
+
+    def __init__(
+        self,
+        num_heads: int,
+        num_kv_heads: int,
+        embed_dim: int,
+        head_dim: int,
+        hidden_dim: int,
+        use_post_attn_norm: bool,
+        use_post_ffw_norm: bool,
+        attn_type: AttentionType,
+        query_pre_attn_scalar: float,
+        transpose_gating_einsum: bool,
+        rope_base_frequency: int = DEFAULT_ROPE_BASE_FREQUENCY,
+        rope_scale_factor: float = DEFAULT_ROPE_SCALE_FACTOR,
+        attn_logits_soft_cap: float | None = None,
+        sliding_window_size: int | None = None,
+        use_qk_norm: bool = False,
+        *,
+        param_dtype: jax.typing.DTypeLike = jnp.float32,
+        rngs: nnx.Rngs,
+    ):
+        self.num_heads = num_heads
+        self.num_kv_heads = num_kv_heads
+        self.embed_dim = embed_dim
+        self.head_dim  = head_dim
+        self.hidden_dim = hidden_dim
+        self.use_post_attn_norm = use_post_attn_norm
+        self.use_post_ffw_norm = use_post_ffw_norm
+        self.attn_type = attn_type
+        self.query_pre_attn_scalar = query_pre_attn_scalar
+        self.transpose_gating_einsum = transpose_gating_einsum
+        self.rope_base_frequency = rope_base_frequency
+        self.rope_scale_factor = rope_scale_factor
+        self.attn_logits_soft_cap = attn_logits_soft_cap
+        self.sliding_window_size = sliding_window_size
+        self.use_qk_norm = use_qk_norm
+
+        # norm = partial()
+        self.pre_attention_norm = GemmaRMSNorm(embed_dim, param_dtype=param_dtype, rngs=rngs)
+
+        self.attn = Attention(
+            num_heads=self.num_heads,
+            features=self.embed_dim,
+            head_dim=self.head_dim,
+            num_kv_heads=self.num_kv_heads,
+            attn_type=self.attn_type,
+            query_pre_attn_scalar=self.query_pre_attn_scalar,
+            rope_base_frequency=self.rope_base_frequency,
+            rope_scale_factor=self.rope_scale_factor,
+            attn_logits_soft_cap=self.attn_logits_soft_cap,
+            sliding_window_size=self.sliding_window_size,
+            use_qk_norm=self.use_qk_norm,
+            param_dtype=param_dtype,
+            rngs=rngs,
+        )
+
+        self.post_attention_norm = None
+        if self.use_post_attn_norm:
+            self.post_attention_norm = GemmaRMSNorm(embed_dim, param_dtype=param_dtype, rngs=rngs)
+
+        self.pre_ffw_norm = GemmaRMSNorm(embed_dim, param_dtype=param_dtype, rngs=rngs)
+
+        self.mlp = FeedForward(
+            features=self.embed_dim,
+            hidden_dim=self.hidden_dim,
+            transpose_gating_einsum=self.transpose_gating_einsum,
+            param_dtype=param_dtype, rngs=rngs
+        )
+
+        self.post_ffw_norm = None
+        if self.use_post_ffw_norm:
+            self.post_ffw_norm = GemmaRMSNorm(embed_dim, param_dtype=param_dtype, rngs=rngs)
+
+    def __call__(
+        self,
+        x: jax.Array,
+        segment_pos: jax.Array,
+        cache: LayerCache | None,
+        attn_mask: jax.Array,
+    ) -> tuple[LayerCache | None, jax.Array]:
+        """Applies the block to the inputs.
+
+        Args:
+            x: Input sequence of shape [batch_size, seq_len, embed_dim].
+            segment_pos: Input absolute positions of shape [batch_size, seq_len].
+            cache: KV cache or None.
+            attn_mask: Attention mask of shape [batch_size, seq_len, cache_size].
+
+        Returns:
+            cache: Updated attention KV cache.
+            outputs: Output sequence of shape [batch_size, seq_len, embed_dim].
+        """
+        inputs_normalized = self.pre_attention_norm(x)
+
+        # attn_output.shape = [batch_size, seq_len, embed_dim]
+        # cache["k"].shape = [batch_size, cache_size, num_heads, head_dim]
+        # cache["v"].shape = [batch_size, cache_size, num_heads, head_dim]
+        # cache["end_index"].shape = [batch_size]
+        cache, attn_output = self.attn(
+            inputs_normalized,
+            segment_pos,
+            cache,
+            attn_mask,
+        )
+
+        if self.post_attention_norm is not None:
+            attn_output = self.post_attention_norm(attn_output)
+
+        attn_output += x
+
+        outputs = self.pre_ffw_norm(attn_output)
+
+        outputs = self.mlp(outputs)
+
+        if self.post_ffw_norm is not None:
+            outputs = self.post_ffw_norm(outputs)
+
+        outputs += attn_output
+
+        return cache, outputs
+
+
+
 def main():
     rngs = nnx.Rngs(params=0)
     batch_size = 1

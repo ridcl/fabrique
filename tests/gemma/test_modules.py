@@ -9,7 +9,7 @@ from gemma.gm.utils import _dtype_params
 
 from fabrique.loading import ConversionRule as R
 from fabrique.loading import apply_rules
-from fabrique.models.gemma.modules import Attention, AttentionType, LayerCache, FeedForward
+from fabrique.models.gemma.modules import Attention, AttentionType, LayerCache, FeedForward, Block
 
 
 def update_module_from_params(module: nnx.Module, rules: List[R], params: dict):
@@ -147,25 +147,90 @@ def test_feedforward(transpose_gating_einsum: bool, dtype):
     x = jax.random.normal(rngs.params(), (batch_size, seq_len, features), dtype=dtype)
 
     with _dtype_params.initialize_param_with_dtype(dtype):
-        ff_nn = _modules.FeedForward(features, hidden_dim, transpose_gating_einsum)
-        variables = ff_nn.init(rngs.params(), x)
+        ffw_nn = _modules.FeedForward(features, hidden_dim, transpose_gating_einsum)
+        variables = ffw_nn.init(rngs.params(), x)
 
-    ff = FeedForward(features, hidden_dim, transpose_gating_einsum, param_dtype=dtype, rngs=rngs)
+    ffw = FeedForward(features, hidden_dim, transpose_gating_einsum, param_dtype=dtype, rngs=rngs)
     rules = [
         R("gating_einsum", "gating.kernel"),
         R("linear", "linear.kernel"),
     ]
-    update_module_from_params(ff, rules, variables["params"])
+    update_module_from_params(ffw, rules, variables["params"])
 
-    out_nn = ff_nn.apply(variables, x)
-    out = ff(x)
+    out_nn = ffw_nn.apply(variables, x)
+    out = ffw(x)
     assert (out_nn == out).all()
     assert out_nn.dtype == out.dtype
 
 
 
+@pytest.mark.parametrize(
+    "dtype",
+    [jnp.float32, jnp.bfloat16]
+)
+def test_block(
+    dtype: jax.typing.DTypeLike
+):
+    rngs = nnx.Rngs(params=101)
+    key = rngs.params()
+    batch_size = 2
+    seq_len = 10
+    cache_size = 20
+    kw = ATTN_KW | {
+        "hidden_dim": 32,
+        "use_post_attn_norm": True,
+        "use_post_ffw_norm": True,
+        "transpose_gating_einsum": False,
+        "embed_dim": ATTN_KW["features"],
+    }
+    del kw["features"]
 
+    cache: LayerCache = Attention.init_cache(
+        cache_size=cache_size,
+        num_heads=kw["num_kv_heads"],
+        head_dim=kw["head_dim"],
+        batch_size=batch_size,
+        dtype=dtype,
+    )
+    x = jax.random.normal(
+        rngs.params(), (batch_size, seq_len, kw["embed_dim"]), dtype=dtype
+    )
+    segment_pos = jnp.tile(jnp.arange(seq_len), (batch_size, 1))
+    attn_mask = jax.random.randint(
+        rngs.params(), (batch_size, seq_len, cache_size), 0, 2
+    )
 
+    # overwrite self.param() to use specified dtype - just like in original code
+    with _dtype_params.initialize_param_with_dtype(dtype):
+        block_nn = _modules.Block(**kw)
+        variables = block_nn.init(key, x, segment_pos, cache, attn_mask)
+
+    block = Block(**kw, param_dtype=dtype, rngs=rngs)
+    rules = [
+        # attn
+        R("attn.attn_vec_einsum.w", "attn.attn_vec_einsum.kernel"),
+        R("attn.qkv_einsum.w", "attn.qkv_einsum.kernel"),
+        R("attn.q_einsum.w", "attn.q_einsum.kernel"),
+        R("attn.kv_einsum.w", "attn.kv_einsum.kernel"),
+        R("attn._query_norm.scale", "attn._query_norm.scale"),
+        R("attn._key_norm.scale", "attn._key_norm.scale"),
+        # ffw
+        R("mlp.gating_einsum", "mlp.gating.kernel"),
+        R("mlp.linear", "mlp.linear.kernel"),
+        # norms
+        R("pre_attention_norm.scale", "pre_attention_norm.scale"),
+        R("post_attention_norm.scale", "post_attention_norm.scale"),
+        R("pre_ffw_norm.scale", "pre_ffw_norm.scale"),
+        R("post_ffw_norm.scale", "post_ffw_norm.scale"),
+    ]
+    update_module_from_params(block, rules, variables["params"])
+
+    # check model call
+    new_cache_nn, out_nn = block_nn.apply(variables, x, segment_pos, cache, attn_mask)
+    new_cache, out = block(x, segment_pos, cache, attn_mask)
+    assert (out_nn == out).all()
+    for p in ("k", "v", "end_index"):
+        assert (new_cache_nn[p] == new_cache[p]).all()
 
 
 

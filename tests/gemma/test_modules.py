@@ -9,7 +9,7 @@ from gemma.gm.utils import _dtype_params
 
 from fabrique.loading import ConversionRule as R
 from fabrique.loading import apply_rules
-from fabrique.models.gemma.modules import Attention, AttentionType, Embedder, LayerCache
+from fabrique.models.gemma.modules import Attention, AttentionType, LayerCache, FeedForward
 
 
 def update_module_from_params(module: nnx.Module, rules: List[R], params: dict):
@@ -125,6 +125,45 @@ def test_attention(
         attn_nn.apply(variables, x, segment_pos, new_cache_nn, attn_mask)
         # new_cache, out =
         attn(x, segment_pos, new_cache, attn_mask)
+
+
+@pytest.mark.parametrize(
+    "transpose_gating_einsum,dtype",
+    [
+        (True, jnp.float32),
+        (True, jnp.bfloat16),
+        (False, jnp.float32),
+        (False, jnp.bfloat16),
+    ]
+)
+def test_feedforward(transpose_gating_einsum: bool, dtype):
+    transpose_gating_einsum = True   # TODO
+    dtype = jnp.bfloat16  # TODO
+    rngs = nnx.Rngs(params=14)
+    batch_size = 1
+    seq_len = 5
+    features: int = 12
+    hidden_dim = 6
+    x = jax.random.normal(rngs.params(), (batch_size, seq_len, features), dtype=dtype)
+
+    with _dtype_params.initialize_param_with_dtype(dtype):
+        ff_nn = _modules.FeedForward(features, hidden_dim, transpose_gating_einsum)
+        variables = ff_nn.init(rngs.params(), x)
+
+    ff = FeedForward(features, hidden_dim, transpose_gating_einsum, param_dtype=dtype, rngs=rngs)
+    rules = [
+        R("gating_einsum", "gating.kernel"),
+        R("linear", "linear.kernel"),
+    ]
+    update_module_from_params(ff, rules, variables["params"])
+
+    out_nn = ff_nn.apply(variables, x)
+    out = ff(x)
+    assert (out_nn == out).all()
+    assert out_nn.dtype == out.dtype
+
+
+
 
 
 

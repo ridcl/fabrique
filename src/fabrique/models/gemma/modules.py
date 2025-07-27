@@ -52,10 +52,6 @@ def _create_sliding_mask(
     return sliding_mask
 
 
-# class AttentionType(enum.Enum):
-#     GLOBAL = 1
-#     LOCAL_SLIDING = 2
-
 AttentionType = _modules.AttentionType
 
 
@@ -111,12 +107,12 @@ class Embedder(nnx.Module):
         """Encodes the input tokens.
 
         Args:
-        x: Input tokens of shape [seq_len] or [batch_size, seq_len], where
-            each token is an integer in [0, vocab_size).
+            x: Input tokens of shape [seq_len] or [batch_size, seq_len], where
+                each token is an integer in [0, vocab_size).
 
         Returns:
-        Encoded tokens of shape [seq_len, embed_dim] or [batch_size, seq_len,
-        embed_dim].
+            Encoded tokens of shape [seq_len, embed_dim] or [batch_size, seq_len,
+            embed_dim].
         """
         x = self.input_embedding_table[(x,)]
         x *= jnp.sqrt(self.embed_dim).astype(x.dtype)
@@ -126,11 +122,11 @@ class Embedder(nnx.Module):
         """Decodes the input vectors.
 
         Args:
-        x: Array of shape [seq_len, embed_dim] or [batch_size, seq_len,
-            embed_dim].
+            x: Array of shape [seq_len, embed_dim] or [batch_size, seq_len,
+                embed_dim].
 
         Returns:
-        Array of shape [seq_len, vocab_size] or [batch_size, seq_len, vocab_size].
+            Array of shape [seq_len, vocab_size] or [batch_size, seq_len, vocab_size].
         """
         return jnp.dot(x, self.input_embedding_table.T)
 
@@ -220,14 +216,14 @@ class Attention(nnx.Module):
         """Applies multi-head attention to the inputs.
 
         Args:
-        x: Input sequence of shape [batch_size, seq_len, embed_dim].
-        segment_pos: Input absolute positions of shape [batch_size, seq_len].
-        cache: KV cache or None.
-        attn_mask: Attention mask of shape [batch_size, seq_len, cache_size].
+            x: Input sequence of shape [batch_size, seq_len, embed_dim].
+            segment_pos: Input absolute positions of shape [batch_size, seq_len].
+            cache: KV cache or None.
+            attn_mask: Attention mask of shape [batch_size, seq_len, cache_size].
 
         Returns:
-        cache: Updated attention KV cache.
-        outputs: Output sequence of shape [batch_size, seq_len, embed_dim].
+           cache: Updated attention KV cache.
+            outputs: Output sequence of shape [batch_size, seq_len, embed_dim].
         """
         if self.use_qkv_einsum:
             # [batch_size, seq_len, num_heads, head_dim]
@@ -358,6 +354,65 @@ class Attention(nnx.Module):
             "k": jnp.zeros((batch_size, cache_size, num_heads, head_dim), dtype=dtype),
             "end_index": jnp.zeros((batch_size,), dtype=jnp.int32),
         }
+
+
+class FeedForward(nnx.Module):
+    """Feed forward module."""
+
+    def __init__(
+        self,
+        features: int,
+        hidden_dim: int,
+        transpose_gating_einsum: bool,
+        *,
+        param_dtype: jax.typing.DTypeLike = jnp.float32,
+        rngs: nnx.Rngs,
+    ):
+        self.features = features  # features = embed_dim
+        self.hidden_dim = hidden_dim
+        self.transpose_gating_einsum = transpose_gating_einsum
+
+        einsum = partial(nnx.Einsum, param_dtype=param_dtype, rngs=rngs)
+        # Some versions use an alternate parameter ordering that
+        # transposes hidden_dim and features.
+        if self.transpose_gating_einsum:
+            self.gating = einsum(
+                "...F,NHF->...NH",
+                kernel_shape=(2, self.hidden_dim, self.features),
+            )
+        else:
+            self.gating = einsum(
+                "...F,NFH->...NH",
+                kernel_shape=(2, self.features, self.hidden_dim),
+            )
+        # Use the same scope for backwards compatibility with existing checkpoints
+        # created before using `_layers.Einsum` here.
+        # import flax.linen as nn
+        # nn.share_scope(self, gating)
+
+        # Project back from hidden_dim to features.
+        self.linear = einsum(
+            "...H,HF->...F",
+            kernel_shape=(self.hidden_dim, self.features),
+        )
+        # nn.share_scope(self, linear)
+
+    def __call__(self, x):
+        """Applies the feed forward module.
+
+        Args:
+            x: Input sequence of shape [batch_size, seq_len, features].
+
+        Returns:
+            Output sequence of shape [batch_size, seq_len, features].
+        """
+        # [batch_size, seq_len, 2, hidden_dim]
+        gate = self.gating(x)
+        # [batch_size, seq_len, hidden_dim]
+        activations = nnx.gelu(gate[..., 0, :]) * gate[..., 1, :]
+        # [batch_size, seq_len, features]
+        outputs = self.linear(activations)
+        return outputs
 
 
 def main():

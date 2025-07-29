@@ -58,17 +58,13 @@ AttentionType = _modules.AttentionType
 class Embedder(nnx.Module):
     """Embedder module."""
 
-    vocab_size: int
-    embed_dim: int
-
-    vision_proj_dim: int | None = None
-
     def __init__(
         self,
         vocab_size: int,
         embed_dim: int,
         vision_proj_dim: int | None = None,
         *,
+        param_dtype: jax.typing.DTypeLike = jnp.bfloat16,
         rngs: nnx.Rngs,
     ):
         self.vocab_size = vocab_size
@@ -90,17 +86,13 @@ class Embedder(nnx.Module):
         #   embedding space of the text encoder. Those tokens are then merged with
         #   the text tokens inside `Transformer._include_vision_embeddings`.
         if self.vision_proj_dim:
-            self.mm_soft_embedding_norm = bridge.ToNNX(_layers.RMSNorm(), rngs=rngs)
-            bridge.lazy_init(
-                self.mm_soft_embedding_norm, jnp.zeros(self.vision_proj_dim), rngs=rngs
+            self.mm_soft_embedding_norm = GemmaRMSNorm(
+                self.embed_dim, param_dtype=param_dtype, rngs=rngs
             )
-            self.mm_input_projection = bridge.ToNNX(
-                _layers.Einsum((self.vision_proj_dim, self.embed_dim))
-            )
-            bridge.lazy_init(
-                self.mm_input_projection,
+            self.mm_input_projection = nnx.Einsum(
                 "...tm,md->...td",
-                jax.random.normal(rngs.params(), (1, self.vision_proj_dim)),
+                kernel_shape=(self.vision_proj_dim, self.embed_dim),
+                rngs=rngs
             )
 
     def encode(self, x: jax.Array) -> jax.Array:
@@ -133,7 +125,7 @@ class Embedder(nnx.Module):
     def encode_vision(self, x: jax.Array) -> jax.Array:
         """Projects siglip embeddings to the embedding space of the text encoder."""
         x = self.mm_soft_embedding_norm(x)
-        x = self.mm_input_projection("...tm,md->...td", x)
+        x = self.mm_input_projection(x)
         return x
 
 
@@ -442,7 +434,7 @@ class Block(nnx.Module):
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads
         self.embed_dim = embed_dim
-        self.head_dim  = head_dim
+        self.head_dim = head_dim
         self.hidden_dim = hidden_dim
         self.use_post_attn_norm = use_post_attn_norm
         self.use_post_ffw_norm = use_post_ffw_norm
@@ -456,7 +448,9 @@ class Block(nnx.Module):
         self.use_qk_norm = use_qk_norm
 
         # norm = partial()
-        self.pre_attention_norm = GemmaRMSNorm(embed_dim, param_dtype=param_dtype, rngs=rngs)
+        self.pre_attention_norm = GemmaRMSNorm(
+            embed_dim, param_dtype=param_dtype, rngs=rngs
+        )
 
         self.attn = Attention(
             num_heads=self.num_heads,
@@ -476,7 +470,9 @@ class Block(nnx.Module):
 
         self.post_attention_norm = None
         if self.use_post_attn_norm:
-            self.post_attention_norm = GemmaRMSNorm(embed_dim, param_dtype=param_dtype, rngs=rngs)
+            self.post_attention_norm = GemmaRMSNorm(
+                embed_dim, param_dtype=param_dtype, rngs=rngs
+            )
 
         self.pre_ffw_norm = GemmaRMSNorm(embed_dim, param_dtype=param_dtype, rngs=rngs)
 
@@ -484,12 +480,15 @@ class Block(nnx.Module):
             features=self.embed_dim,
             hidden_dim=self.hidden_dim,
             transpose_gating_einsum=self.transpose_gating_einsum,
-            param_dtype=param_dtype, rngs=rngs
+            param_dtype=param_dtype,
+            rngs=rngs,
         )
 
         self.post_ffw_norm = None
         if self.use_post_ffw_norm:
-            self.post_ffw_norm = GemmaRMSNorm(embed_dim, param_dtype=param_dtype, rngs=rngs)
+            self.post_ffw_norm = GemmaRMSNorm(
+                embed_dim, param_dtype=param_dtype, rngs=rngs
+            )
 
     def __call__(
         self,
@@ -538,7 +537,6 @@ class Block(nnx.Module):
         outputs += attn_output
 
         return cache, outputs
-
 
 
 def main():

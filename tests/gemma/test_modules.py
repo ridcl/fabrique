@@ -1,15 +1,22 @@
-import pytest
 from typing import List
 
 import jax
 import jax.numpy as jnp
+import pytest
 from flax import nnx
 from gemma.gm.nn import _layers, _modules
 from gemma.gm.utils import _dtype_params
 
 from fabrique.loading import ConversionRule as R
 from fabrique.loading import apply_rules
-from fabrique.models.gemma.modules import Attention, AttentionType, LayerCache, FeedForward, Block
+from fabrique.models.gemma.modules import (
+    Attention,
+    AttentionType,
+    Block,
+    Embedder,
+    FeedForward,
+    LayerCache,
+)
 
 
 def update_module_from_params(module: nnx.Module, rules: List[R], params: dict):
@@ -26,8 +33,54 @@ def update_module_from_params(module: nnx.Module, rules: List[R], params: dict):
     apply_rules(module, rules, flat)
 
 
+def test_embedder():
+    batch_size = 2
+    seq_len = 5
+    vocab_size = 32
+    embed_dim = 16
+    vision_proj_dim = 16
+    param_dtype = jnp.bfloat16
+    rngs = nnx.Rngs(params=102)
+    key = rngs.params()
+    tokens = jax.random.randint(key, (batch_size, seq_len), 0, vocab_size)
+    vectors = jax.random.randint(key, (batch_size, embed_dim), 0, vocab_size)
 
-# logic: define default arguments to Attention and then add various modifications
+    emb_nn = _modules.Embedder(
+        vocab_size=vocab_size, embed_dim=embed_dim, vision_proj_dim=vision_proj_dim
+    )
+    variables = emb_nn.init(key, jnp.ones((seq_len, vision_proj_dim)), method=_modules.Embedder.encode_vision)
+
+    emb = Embedder(
+        vocab_size=vocab_size,
+        embed_dim=embed_dim,
+        vision_proj_dim=vision_proj_dim,
+        param_dtype=param_dtype,
+        rngs=rngs,
+    )
+    rules = [
+        R("input_embedding", "input_embedding_table"),
+        R("mm_soft_embedding_norm.scale", "mm_soft_embedding_norm.scale"),
+        R("mm_input_projection.w", "mm_input_projection.kernel"),
+    ]
+    update_module_from_params(emb, rules, variables["params"])
+
+    # emb.input_embedding_table = params["params"]["input_embedding"]
+
+    encoded_nn = emb_nn.apply(variables, tokens, method=_modules.Embedder.encode)
+    encoded = emb.encode(tokens)
+    assert (encoded_nn == encoded).all()
+
+    decoded_nn = emb_nn.apply(variables, vectors, method=_modules.Embedder.decode)
+    decoded = emb.decode(vectors)
+    assert (decoded_nn == decoded).all()
+
+    vis_encoded_nn = emb_nn.apply(variables, vectors, method=_modules.Embedder.encode_vision)
+    vis_encoded = emb.encode_vision(vectors)
+    assert (vis_encoded_nn == vis_encoded).all()
+
+
+# attention accepts a whole lot of arguments, so we define the default ones
+# and then modify them for various test cases
 ATTN_KW = {
     "num_heads": 2,
     "num_kv_heads": 2,
@@ -42,7 +95,6 @@ GQA_KW = {"num_heads": 8, "num_kv_heads": 4}
 GLOBAL_ATTN_KW = {"attn_type": AttentionType.GLOBAL}
 
 
-
 @pytest.mark.parametrize(
     "batch_size,seq_len,cache_size,dtype,use_cache,attn_kw_args",
     [
@@ -53,14 +105,26 @@ GLOBAL_ATTN_KW = {"attn_type": AttentionType.GLOBAL}
         # (2, 10, 5, jnp.bfloat16, True, ATTN_KW), -- illegal: global cache < seq_len
         (2, 10, 20, jnp.bfloat16, True, ATTN_KW | GQA_KW),
         (2, 10, 20, jnp.bfloat16, True, ATTN_KW | GQA_KW | {"use_qk_norm": True}),
-        (2, 10, 20, jnp.bfloat16, True, ATTN_KW | GQA_KW | {"attn_logits_soft_cap": 5.0}),
+        (
+            2,
+            10,
+            20,
+            jnp.bfloat16,
+            True,
+            ATTN_KW | GQA_KW | {"attn_logits_soft_cap": 5.0},
+        ),
         (2, 10, 5, jnp.bfloat16, False, ATTN_KW | GQA_KW),
         (2, 10, 20, jnp.bfloat16, False, ATTN_KW | GQA_KW | GLOBAL_ATTN_KW),
         (2, 10, 20, jnp.bfloat16, False, ATTN_KW | GLOBAL_ATTN_KW),
-    ]
+    ],
 )
 def test_attention(
-    batch_size: int, seq_len: int, cache_size: int, dtype, use_cache: bool, attn_kw_args: dict
+    batch_size: int,
+    seq_len: int,
+    cache_size: int,
+    dtype,
+    use_cache: bool,
+    attn_kw_args: dict,
 ):
     kw = attn_kw_args
     rngs = nnx.Rngs(params=101)
@@ -116,7 +180,9 @@ def test_attention(
         x = jax.random.normal(
             rngs.params(), (batch_size, seq_len, kw["features"]), dtype=dtype
         )
-        segment_pos = jnp.tile(jnp.array([end_index + 1, end_index + 2]), (batch_size, 1))
+        segment_pos = jnp.tile(
+            jnp.array([end_index + 1, end_index + 2]), (batch_size, 1)
+        )
 
         attn_mask = jax.random.randint(
             rngs.params(), (batch_size, seq_len, cache_size), 0, 2
@@ -134,10 +200,10 @@ def test_attention(
         (True, jnp.bfloat16),
         (False, jnp.float32),
         (False, jnp.bfloat16),
-    ]
+    ],
 )
 def test_feedforward(transpose_gating_einsum: bool, dtype):
-    transpose_gating_einsum = True   # TODO
+    transpose_gating_einsum = True  # TODO
     dtype = jnp.bfloat16  # TODO
     rngs = nnx.Rngs(params=14)
     batch_size = 1
@@ -150,7 +216,9 @@ def test_feedforward(transpose_gating_einsum: bool, dtype):
         ffw_nn = _modules.FeedForward(features, hidden_dim, transpose_gating_einsum)
         variables = ffw_nn.init(rngs.params(), x)
 
-    ffw = FeedForward(features, hidden_dim, transpose_gating_einsum, param_dtype=dtype, rngs=rngs)
+    ffw = FeedForward(
+        features, hidden_dim, transpose_gating_einsum, param_dtype=dtype, rngs=rngs
+    )
     rules = [
         R("gating_einsum", "gating.kernel"),
         R("linear", "linear.kernel"),
@@ -163,14 +231,8 @@ def test_feedforward(transpose_gating_einsum: bool, dtype):
     assert out_nn.dtype == out.dtype
 
 
-
-@pytest.mark.parametrize(
-    "dtype",
-    [jnp.float32, jnp.bfloat16]
-)
-def test_block(
-    dtype: jax.typing.DTypeLike
-):
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.bfloat16])
+def test_block(dtype: jax.typing.DTypeLike):
     rngs = nnx.Rngs(params=101)
     key = rngs.params()
     batch_size = 2
@@ -233,10 +295,16 @@ def test_block(
         assert (new_cache_nn[p] == new_cache[p]).all()
 
 
-
 def main():
-    batch_size,seq_len,cache_size,dtype,use_cache,attn_kw_args = (2, 10, 5, jnp.bfloat16, False, ATTN_KW | GQA_KW)
-    test_attention(batch_size,seq_len,cache_size,dtype,use_cache,attn_kw_args)
+    batch_size, seq_len, cache_size, dtype, use_cache, attn_kw_args = (
+        2,
+        10,
+        5,
+        jnp.bfloat16,
+        False,
+        ATTN_KW | GQA_KW,
+    )
+    test_attention(batch_size, seq_len, cache_size, dtype, use_cache, attn_kw_args)
 
     rng = nnx.Rngs(0)
     head_dim = 5

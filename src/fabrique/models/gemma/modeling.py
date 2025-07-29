@@ -1,3 +1,6 @@
+# based on:
+# https://github.com/google-deepmind/gemma/blob/main/gemma/gm/nn/_transformer.py
+import dataclasses
 from typing import Any, ClassVar
 
 import einops
@@ -9,16 +12,35 @@ from gemma import gm
 from gemma.gm.nn import _config, _layers, _modules, _transformer
 from gemma.gm.nn._transformer import ModelInfo
 from gemma.gm.utils import _dtype_params, _types
+from gemma.multimodal import vision as gemma_vision
 
-from fabrique.models.gemma.modules import Embedder
+from fabrique.models.gemma.layers import GemmaRMSNorm
+from fabrique.models.gemma.modules import Block, Embedder
 
 
-class Transformer:
+def main():
+    self = Transformer.__new__(Transformer)
+
+
+class Transformer(nnx.Module):
+    """Base transformer class.
+
+    Attributes:
+        return_last_only: If `True`, only compute and return the last token.
+        Otherwise, return all logits. Default to `False`
+        dtype: The parameter dtype. Default to `jnp.bfloat16`.
+    """
 
     # Model info to specifiy the tokenizer version and default checkpoint.
     INFO: ClassVar[ModelInfo] = ModelInfo()
 
-    def __init__(self, config: _config.TransformerConfig, *, rngs: nnx.Rngs):
+    def __init__(
+        self,
+        config: _config.TransformerConfig,
+        *,
+        param_dtype: jax.typing.DTypeLike = jnp.bfloat16,
+        rngs: nnx.Rngs,
+    ):
         self.return_last_only: bool | None = None
 
         self.dtype: jnp.dtype = jnp.bfloat16
@@ -42,49 +64,40 @@ class Transformer:
         )
 
         self.blocks = [
-            bridge.ToNNX(
-                _modules.Block(
-                    name=f"layer_{i}",
-                    num_heads=self.config.num_heads,
-                    num_kv_heads=self.config.num_kv_heads,
-                    embed_dim=self.config.embed_dim,
-                    head_dim=self.config.head_dim,
-                    hidden_dim=self.config.hidden_dim,
-                    sliding_window_size=self.config.sliding_window_size,
-                    use_post_attn_norm=self.config.use_post_attn_norm,
-                    use_post_ffw_norm=self.config.use_post_ffw_norm,
-                    attn_logits_soft_cap=self.config.attn_logits_soft_cap,
-                    attn_type=attn_type,
-                    query_pre_attn_scalar=self.config.query_pre_attn_scalar(),
-                    transpose_gating_einsum=self.config.transpose_gating_einsum,
-                    use_qk_norm=self.config.use_qk_norm,
-                    rope_base_frequency=(
-                        self.config.local_base_frequency
-                        if attn_type == _modules.AttentionType.LOCAL_SLIDING
-                        else self.config.global_base_frequency
-                    ),
-                    rope_scale_factor=(
-                        self.config.local_scale_factor
-                        if attn_type == _modules.AttentionType.LOCAL_SLIDING
-                        else self.config.global_scale_factor
-                    ),
+            Block(
+                # name=f"layer_{i}",
+                num_heads=self.config.num_heads,
+                num_kv_heads=self.config.num_kv_heads,
+                embed_dim=self.config.embed_dim,
+                head_dim=self.config.head_dim,
+                hidden_dim=self.config.hidden_dim,
+                sliding_window_size=self.config.sliding_window_size,
+                use_post_attn_norm=self.config.use_post_attn_norm,
+                use_post_ffw_norm=self.config.use_post_ffw_norm,
+                attn_logits_soft_cap=self.config.attn_logits_soft_cap,
+                attn_type=attn_type,
+                query_pre_attn_scalar=self.config.query_pre_attn_scalar(),
+                transpose_gating_einsum=self.config.transpose_gating_einsum,
+                use_qk_norm=self.config.use_qk_norm,
+                rope_base_frequency=(
+                    self.config.local_base_frequency
+                    if attn_type == _modules.AttentionType.LOCAL_SLIDING
+                    else self.config.global_base_frequency
                 ),
+                rope_scale_factor=(
+                    self.config.local_scale_factor
+                    if attn_type == _modules.AttentionType.LOCAL_SLIDING
+                    else self.config.global_scale_factor
+                ),
+                param_dtype=param_dtype,
                 rngs=rngs,
             )
             for i, attn_type in zip(
                 range(self.config.num_layers), self.config.attention_types
             )
         ]
-        # TODO:
-        for block in self.blocks:
-            bridge.lazy_init(
-                block,
-                x,
-                inputs.positions,
-                old_cache.get(layer_name),
-                inputs.attention_mask,
-            )
-        self.final_norm = bridge.ToNNX(_layers.RMSNorm(), rngs=rngs)
+        return
+        self.final_norm = GemmaRMSNorm(rngs=rngs)
         self.final_norm.lazy_init(jnp.zeros((20)))
 
         self.vision_encoder = self.config.vision_encoder
@@ -290,6 +303,7 @@ class Transformer:
 
 def main():
     rngs = nnx.Rngs(params=12)
+    param_dtype = jnp.bfloat16
     config = _config.TransformerConfig(
         final_logit_softcap=None,
         num_embed=262144,  # Vocab size, matching the tokenizer
@@ -311,10 +325,10 @@ def main():
         transpose_gating_einsum=True,
         local_base_frequency=10_000,
         global_base_frequency=1_000_000,
-        vision_encoder=None,  # Text-only
+        vision_encoder=gemma_vision.SigLiPFromPatches(),
     )
     # self = Transformer.__new__(Transformer)
-    self = Transformer(config, rngs=rngs)
+    self = Transformer(config, param_dtype=param_dtype, rngs=rngs)
 
     key = jax.random.key(0)
     tokens: jax.Array = jax.random.randint(

@@ -86,13 +86,14 @@ class Embedder(nnx.Module):
         #   embedding space of the text encoder. Those tokens are then merged with
         #   the text tokens inside `Transformer._include_vision_embeddings`.
         if self.vision_proj_dim:
+            # note: keeping the params in float32
             self.mm_soft_embedding_norm = GemmaRMSNorm(
-                self.embed_dim, param_dtype=param_dtype, rngs=rngs
+                self.vision_proj_dim, rngs=rngs
             )
             self.mm_input_projection = nnx.Einsum(
                 "...tm,md->...td",
                 kernel_shape=(self.vision_proj_dim, self.embed_dim),
-                rngs=rngs
+                rngs=rngs,
             )
 
     def encode(self, x: jax.Array) -> jax.Array:

@@ -13,7 +13,9 @@
 
 	"containerEnv": {
 		"PYTHONPATH": "src",
-		"HF_TOKEN": "${localEnv:HF_TOKEN_PERSONAL}"
+		"HF_TOKEN": "${localEnv:HF_TOKEN_PERSONAL}",
+		"JAX_COMPILATION_CACHE_DIR": "/tmp/jax_cache",
+		"XLA_PYTHON_CLIENT_MEM_FRACTION": ".99"
 	},
 
 	"runArgs": ["--gpus", "all"]

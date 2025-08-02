@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 from flax import nnx
+from fabrique.utils import print_var
 
 
 class GemmaRMSNorm(nnx.Module):
@@ -16,7 +17,7 @@ class GemmaRMSNorm(nnx.Module):
         self,
         num_features: int,
         *,
-        param_dtype: jax.typing.DTypeLike = jnp.float32,
+        param_dtype: jax.typing.DTypeLike = jnp.bfloat16,
         rngs: nnx.Rngs | None = None,
     ):
         self.scale = nnx.Param(jnp.zeros(shape=num_features, dtype=param_dtype))

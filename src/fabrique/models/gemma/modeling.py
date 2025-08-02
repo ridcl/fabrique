@@ -1,7 +1,6 @@
 # based on:
 # https://github.com/google-deepmind/gemma/blob/main/gemma/gm/nn/_transformer.py
-import dataclasses
-from typing import Any, ClassVar
+from typing import ClassVar
 
 import einops
 import jax
@@ -15,6 +14,7 @@ from gemma.gm.utils import _dtype_params, _types
 from gemma.gm.vision import _token_utils
 from gemma.multimodal import vision as gemma_vision
 
+from fabrique.loading import ConversionRule as R, update_module_from_params
 from fabrique.models.gemma.layers import GemmaRMSNorm
 from fabrique.models.gemma.modules import Block, Embedder
 
@@ -39,14 +39,7 @@ class Transformer(nnx.Module):
         rngs: nnx.Rngs,
     ):
         self.return_last_only: bool | None = None
-
         self.dtype: jnp.dtype = jnp.bfloat16
-
-        # # Keys to specify in the config which inputs to pass to the `__call__`
-        # # function (e.g. `tokens='batch.tokens'`).
-        # self.tokens: kontext.Key = kontext.REQUIRED
-        # self.images: kontext.Key | None = None
-
         self.config = config
 
         self.embedder = Embedder(
@@ -57,12 +50,12 @@ class Transformer(nnx.Module):
                 if self.config.vision_encoder
                 else None
             ),
+            param_dtype=param_dtype,
             rngs=rngs,
         )
 
         self.blocks = [
             Block(
-                # name=f"layer_{i}",
                 num_heads=self.config.num_heads,
                 num_kv_heads=self.config.num_kv_heads,
                 embed_dim=self.config.embed_dim,
@@ -89,9 +82,7 @@ class Transformer(nnx.Module):
                 param_dtype=param_dtype,
                 rngs=rngs,
             )
-            for i, attn_type in zip(
-                range(self.config.num_layers), self.config.attention_types
-            )
+            for attn_type in self.config.attention_types
         ]
         self.final_norm = GemmaRMSNorm(
             config.embed_dim, param_dtype=param_dtype, rngs=rngs
@@ -100,7 +91,9 @@ class Transformer(nnx.Module):
         # using the original TransformerConfig class
         self.vision_encoder = self._wrap_and_init_vision_encoder(self.config.vision_encoder, rngs=rngs)
 
-    def _wrap_and_init_vision_encoder(self, vision_encoder: gemma_vision.SigLiPFromPatches, rngs: nnx.Rngs) -> bridge.ToNNX:
+    def _wrap_and_init_vision_encoder(self, vision_encoder: gemma_vision.SigLiPFromPatches | None, rngs: nnx.Rngs) -> bridge.ToNNX:
+        if vision_encoder is None:
+            return None
         wrapped = bridge.ToNNX(vision_encoder, rngs=rngs)
 
         num_patches_one_side = (
@@ -112,24 +105,17 @@ class Transformer(nnx.Module):
         wrapped.lazy_init(patches=dummy_patches, is_training=False)
         return wrapped
 
-    # The function accepts/returns aribtrary batch shape, but inside the
-    # function, the batch dimension is flattened to a single dimension.
-    # @_jax_utils.flatten_unflatten_batch_dim()
-    # @typecheckeds
-    def __call__(  # pytype: disable=signature-mismatch
+    def __repr__(self):
+        return "Transformer[Gemma](...)"
+
+    def __call__(
         self,
         tokens: jax.Array,  # Int['*B L']
         *,
-        images: jax.Array | None = None,  # UInt8['*B N H W C'] | UInt8['*B H W C']
-        # TODO(epot): Cleanup and simplify the API.
-        # When provided, the positions and attention_mask should include
-        # the extra inserted multi-modal tokens.
-        positions: jax.Array | None = None,  # Int['*B L_with_mm'] | None = None,
+        images: jax.Array | None = None,
+        positions: jax.Array | None = None,
         cache: _config.Cache | None = None,
-        # During training and pre-filling, the attention mask is `*B L L`
-        # When sampling (after prefilling), tokens are decoded one by one,
-        # so the attention mask is `*B 1 cache_length`
-        attention_mask: jax.Array | None = None,  # Bool['*B L_with_mm cache_length']
+        attention_mask: jax.Array | None = None,
         return_last_only: bool | None = None,
         return_hidden_states: bool | None = None,
     ) -> _transformer.Output:  # Output['*B']
@@ -139,11 +125,16 @@ class Transformer(nnx.Module):
         cache.
 
         Args:
-        tokens: input sequence of tokens.
-        images: Images to feed to the vision encoder.
-        positions: input absolute positions.
+        tokens: input sequence of tokens, Int['*B L'].
+        images: Images to feed to the vision encoder, UInt8['*B N H W C'] | UInt8['*B H W C'].
+        positions: input absolute positions, Int['*B L_with_mm'].
+            When provided, the positions and attention_mask should include
+            the extra inserted multi-modal tokens.
         cache: Attention KV cache or None.
-        attention_mask: transformer input mask.
+        attention_mask: transformer input mask, Bool['*B L_with_mm cache_length'].
+            During training and pre-filling, the attention mask is `*B L L`
+            When sampling (after prefilling), tokens are decoded one by one,
+            so the attention mask is `*B 1 cache_length`
         return_last_only: If `True`, only compute and return the logits of the
             last input token in sequence. Useful for decoding where we don't need to
             compute logits for the whole sequence, but only for the last token.
@@ -153,26 +144,13 @@ class Transformer(nnx.Module):
             and the cache. Default to `False`.
 
         Returns:
-        predicted_logits, new_cache
+            predicted_logits, new_cache
 
-        predicted_logits: output logits predicted by the model
-        new_cache: updated cache if the input cache is not None, None elsewhere.
+            predicted_logits: output logits predicted by the model
+            new_cache: updated cache if the input cache is not None, None elsewhere.
         """
 
         return_last_only = return_last_only or self.return_last_only
-
-        # with _dtype_params.initialize_param_with_dtype(
-        #     self.dtype,
-        #     exclude=[
-        #         # The multi-modal params are kept in float32.
-        #         'vision_encoder',
-        #         'embedder.mm_input_projection',
-        #         'embedder.mm_soft_embedding_norm',
-        #         # Skip the LoRA params
-        #         'lora',
-        #     ],
-        # ):
-        #     pass
 
         # Encode the text tokens, eventually including the vision embeddings.
         inputs = self._encode_and_get_inputs(
@@ -203,7 +181,6 @@ class Transformer(nnx.Module):
 
         if return_last_only:
             last_input_token_idx = jnp.sum(inputs.inputs_mask, axis=-1) - 1
-            # TODO(epot): Use `jnp.take_along_axis`
             x = x[jnp.arange(len(x)), last_input_token_idx, ...]
         elif images is not None:
             # Remove the MM extra tokens inserted.
@@ -227,20 +204,23 @@ class Transformer(nnx.Module):
             hidden_states=x if return_hidden_states else None,
         )
 
-    # @typechecked
     def _encode_and_get_inputs(
         self,
         *,
-        # Int['B L_no_mm'],
         tokens: jax.Array,
-        # UInt8['B H W C'] | UInt8['B N H W C'] | None = None,
         images: jax.Array | None = None,
-        # Bool['B L_with_mm cache_length'] | None = None,
         attention_mask: jax.Array | None = None,
-        # Int['B L_with_mm'] | None = None,
         positions: jax.Array | None = None,
     ) -> _transformer._Inputs:
-        """Encode the text tokens, eventually including the vision embeddings."""
+        """
+        Encode the text tokens, eventually including the vision embeddings.
+
+        Args:
+        tokens: Input sequence of tokens, Int['B L_no_mm'].
+        images: Images to fit to he vision encoder, Bool['B L_with_mm cache_length'].
+        attention_mask: Attention mask, Bool['B L_with_mm cache_length'].
+        positions: Input absolute positions, Int['B L_with_mm'].
+        """
 
         # If the model has images, we expand each `<start_of_image>` token to add
         # the image placeholder tokens.
@@ -267,10 +247,10 @@ class Transformer(nnx.Module):
             x = self._merge_mm_embeddings(
                 tokens=inputs.tokens_with_mm, embeddings=x, images=inputs.images
             )
-        elif self.vision_encoder is not None and self.is_initializing():
+        elif self.vision_encoder is not None:
             # During initialization, call the vision encoder to ensure that the
             # params are correctly initialized.
-            _ = self._encode_vision(_make_dummy_images(self.vision_encoder))
+            _ = self._encode_vision(_make_dummy_images(self.vision_encoder.module))
 
         # Note: When `positions` and `attention_mask` are explicitly provided,
         # it's the user responsibility to correctly take into account the extra
@@ -289,16 +269,6 @@ class Transformer(nnx.Module):
             inputs_mask=inputs.inputs_mask,
         )
 
-    # def _get_return_last_only(self, return_last_only: bool | None = None) -> bool:
-    #     """Merge `return_last_only` from the config and input."""
-    #     # TODO(epot): Could add `default=False` to `nn.merge_param`
-    #     if return_last_only is None and self.return_last_only is None:
-    #         return_last_only = False
-    #     else:
-    #         return_last_only = nn.merge_param(
-    #             'return_last_only', return_last_only, self.return_last_only
-    #         )
-    #     return return_last_only
 
     def _merge_mm_embeddings(
         self,
@@ -341,7 +311,6 @@ class Transformer(nnx.Module):
             )
 
 
-
 def _make_dummy_images(
     vision_encoder: gemma_vision.SigLiPFromPatches,
 ) -> jax.Array:   # Float['B L P D']
@@ -353,69 +322,38 @@ def _make_dummy_images(
 
 
 
+# TODO:
+# 3. add loader
+# 4. add sampler
+
+
 def main():
-    rngs = nnx.Rngs(params=12)
+    rngs = nnx.Rngs(params=116)
+    # param_dtype = jnp.bfloat16
     param_dtype = jnp.bfloat16
-    config = _config.TransformerConfig(
-        final_logit_softcap=None,
-        num_embed=262144,  # Vocab size, matching the tokenizer
-        embed_dim=896,
-        hidden_dim=4 * 896,
-        num_heads=4,
-        head_dim=256,
-        num_kv_heads=1,
-        use_post_attn_norm=True,
-        use_post_ffw_norm=True,
-        use_qk_norm=True,
-        attention_types=gm.nn.config.make_attention_layers_types(
-            pattern=gm.nn.config.GEMMA3_ATTENTION_PATTERN,
-            num_layers=12,
-        ),
-        query_pre_attn_norm=gm.nn.config.QueryPreAttentionNormalisation.BY_ONE_OVER_SQRT_HEAD_DIM,
-        attn_logits_soft_cap=None,
-        sliding_window_size=512,
-        transpose_gating_einsum=True,
-        local_base_frequency=10_000,
-        global_base_frequency=1_000_000,
-        vision_encoder=gemma_vision.SigLiPFromPatches(),
-    )
-    # self = Transformer.__new__(Transformer)
-    self = Transformer(config, param_dtype=param_dtype, rngs=rngs)
+    config = gm.nn.Gemma3_1B.config
+    model = Transformer(config, param_dtype=param_dtype, rngs=rngs)
+    model_nn = _transformer.Transformer(config=config)
 
-    key = jax.random.key(0)
-    tokens: jax.Array = jax.random.randint(
-        key, (1, 5), minval=0, maxval=100
-    )  # Int['B L_no_mm'],
-    images = jax.random.randint(
-        key, (1, 900, 900, 3), 0, 255, dtype=jnp.uint8
-    )  # UInt8['B H W C'] | UInt8['B N H W C'] | None = None,
-    attention_mask: jax.Array | None = (
-        None  # Bool['B L_with_mm cache_length'] | None = None,
-    )
-    positions: jax.Array | None = None  # Int['B L_with_mm'] | None = None,
+    tokenizer = gm.text.Gemma3Tokenizer()
+    tokens = jnp.array(tokenizer.encode("Once upon a time", add_bos=True)).reshape(-1, 1)
+    # images = jax.random.randint(key, (1, 900, 900, 3), 0, 255, dtype=jnp.uint8)
+    images = None
+    positions = None
+    attention_mask = None
 
-    out = self(tokens, images=images)
+    params = gm.ckpts.load_params(gm.ckpts.CheckpointPath.GEMMA3_1B_IT)
+    # params = model_nn.init(rngs.params(), tokens=tokens, images=images)["params"]
+    # params = jax.tree.map(lambda x: x.astype(param_dtype), params)
+
+    from fabrique.models.gemma.load_rules import RULES
+    update_module_from_params(model, RULES, params)
 
 
+    out_nn = model_nn.apply({"params": params}, tokens=tokens, images=images)
+    out = model(tokens=tokens, images=images)
 
-# def main():
-#     # Model and parameters
-#     model = gm.nn.Gemma3_4B()
-#     params = gm.ckpts.load_params(gm.ckpts.CheckpointPath.GEMMA3_4B_IT)
+    out_tokens_nn = out_nn.logits.argmax(axis=-1)
+    out_tokens = out.logits.argmax(axis=-1)
 
-#     # Example of multi-turn conversation
-#     sampler = gm.text.ChatSampler(
-#         model=model,
-#         params=params,
-#         multi_turn=True,
-#     )
-
-#     prompt = """Which of the two images do you prefer?
-
-#     Image 1: <start_of_image>
-#     Image 2: <start_of_image>
-
-#     Write your answer as a poem."""
-#     out0 = sampler.chat(prompt, images=[image1, image2])
-
-#     out1 = sampler.chat("What about the other image ?")
+    assert jnp.all(out_tokens_nn == out_tokens)

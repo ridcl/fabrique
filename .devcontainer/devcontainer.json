@@ -18,6 +18,8 @@
 		"XLA_PYTHON_CLIENT_MEM_FRACTION": ".99"
 	},
 
+	"postCreateCommand": "bash .devcontainer/init.sh",
+
 	"runArgs": ["--gpus", "all"]
 
 }

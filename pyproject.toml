@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "flax>=0.10.7",
+    "flax>=0.11.0",
     "gemma>=3.1.0",
     "huggingface-hub>=0.33.4",
     "jinja2>=3.1.6",

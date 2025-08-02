@@ -77,7 +77,7 @@ class Embedder(nnx.Module):
         #     (self.vocab_size, self.embed_dim),
         # )
         self.input_embedding_table = nnx.Param(
-            jax.random.normal(rngs.params(), (vocab_size, embed_dim))
+            jax.random.normal(rngs.params(), (vocab_size, embed_dim), dtype=param_dtype)
         )
 
         # For the multi-modal models, the encoder has additional parameters:

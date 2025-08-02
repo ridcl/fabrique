@@ -1,36 +1,23 @@
-from typing import List
-
 import jax
 import jax.numpy as jnp
 import pytest
 from flax import nnx
-from gemma.gm.nn import _layers, _modules
+from gemma import gm
+from gemma.gm.nn import _layers, _modules, _transformer
 from gemma.gm.utils import _dtype_params
 
 from fabrique.loading import ConversionRule as R
-from fabrique.loading import apply_rules
+from fabrique.loading import update_module_from_params
 from fabrique.models.gemma.modules import (
+    Embedder,
     Attention,
     AttentionType,
-    Block,
-    Embedder,
     FeedForward,
+    GemmaRMSNorm,
     LayerCache,
+    Block,
 )
-
-
-def update_module_from_params(module: nnx.Module, rules: List[R], params: dict):
-    """
-    Update Flax NNX module from a Flax Linen param tree
-    """
-
-    def keys_to_path(keys):
-        return ".".join(key.key for key in keys)
-
-    flat_with_keys, _ = jax.tree.flatten_with_path(params)
-    flat = {keys_to_path(key): val for key, val in flat_with_keys}
-    # TODO: check that shape and dtype match
-    apply_rules(module, rules, flat)
+from fabrique.models.gemma.modeling import Transformer
 
 
 def test_embedder():
@@ -203,8 +190,6 @@ def test_attention(
     ],
 )
 def test_feedforward(transpose_gating_einsum: bool, dtype):
-    transpose_gating_einsum = True  # TODO
-    dtype = jnp.bfloat16  # TODO
     rngs = nnx.Rngs(params=14)
     batch_size = 1
     seq_len = 5
@@ -229,6 +214,33 @@ def test_feedforward(transpose_gating_einsum: bool, dtype):
     out = ffw(x)
     assert (out_nn == out).all()
     assert out_nn.dtype == out.dtype
+
+
+def test_norm():
+    batch_size = 2
+    num_featues = 32
+    dtype = jnp.bfloat16
+    rngs = nnx.Rngs(117)
+    x = jax.random.normal(rngs(), (batch_size, num_featues), dtype=dtype)
+
+    with _dtype_params.initialize_param_with_dtype(dtype):
+        norm_nn = _layers.RMSNorm()
+    # module.init() would set 'scale' to all zeros; we initialize it to random instead
+    variables = {"params": {"scale": jax.random.normal(rngs(), (num_featues,), dtype=dtype)}}
+
+    norm = GemmaRMSNorm(
+        num_features=num_featues,
+        param_dtype=dtype,
+        rngs=rngs,
+    )
+    rules = [
+        R("scale", "scale"),
+    ]
+    update_module_from_params(norm, rules, variables["params"])
+
+    out_nn = norm_nn.apply(variables, x)
+    out = norm(x)
+    assert (out_nn == out).all()
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.bfloat16])
@@ -295,23 +307,33 @@ def test_block(dtype: jax.typing.DTypeLike):
         assert (new_cache_nn[p] == new_cache[p]).all()
 
 
-def main():
-    batch_size, seq_len, cache_size, dtype, use_cache, attn_kw_args = (
-        2,
-        10,
-        5,
-        jnp.bfloat16,
-        False,
-        ATTN_KW | GQA_KW,
-    )
-    test_attention(batch_size, seq_len, cache_size, dtype, use_cache, attn_kw_args)
+def test_transformer():
+    rngs = nnx.Rngs(params=116)
+    # param_dtype = jnp.bfloat16
+    param_dtype = jnp.bfloat16
+    config = gm.nn.Gemma3_1B.config
+    model = Transformer(config, param_dtype=param_dtype, rngs=rngs)
+    model_nn = _transformer.Transformer(config=config)
 
-    rng = nnx.Rngs(0)
-    head_dim = 5
-    x = jax.random.normal(rng(), (3, 4, head_dim))
-    norm_nn = _layers.RMSNorm()
-    variables = norm_nn.init(rng(), x)
-    out_nn = norm_nn.apply(variables, x)
+    tokenizer = gm.text.Gemma3Tokenizer()
+    tokens = jnp.array(tokenizer.encode("Once upon a time", add_bos=True)).reshape(-1, 1)
+    # images = jax.random.randint(key, (1, 900, 900, 3), 0, 255, dtype=jnp.uint8)
+    images = None
+    # positions = None
+    # attention_mask = None
 
-    norm = nnx.RMSNorm(head_dim, rngs=rng)
-    out = norm(x)
+    params = gm.ckpts.load_params(gm.ckpts.CheckpointPath.GEMMA3_1B_IT)
+    # params = model_nn.init(rngs.params(), tokens=tokens, images=images)["params"]
+    # params = jax.tree.map(lambda x: x.astype(param_dtype), params)
+
+    from fabrique.models.gemma.load_rules import RULES
+    update_module_from_params(model, RULES, params)
+
+
+    out_nn = model_nn.apply({"params": params}, tokens=tokens, images=images)
+    out = model(tokens=tokens, images=images)
+
+    out_tokens_nn = out_nn.logits.argmax(axis=-1)
+    out_tokens = out.logits.argmax(axis=-1)
+
+    assert jnp.all(out_tokens_nn == out_tokens)

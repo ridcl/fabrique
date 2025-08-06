@@ -98,7 +98,7 @@ def apply_rules(
 
 
 def update_module_from_safe(
-    model: nnx.Module, rules: List[ConversionRule], model_dir: str
+    module: nnx.Module, rules: List[ConversionRule], model_dir: str
 ):
     """
     Update Flax NNX model from a Huggingface model directory
@@ -116,7 +116,7 @@ def update_module_from_safe(
         raise ValueError(f"Can't find safetensor files in {model_dir}")
     for path in tqdm(safe_files):
         flat = st.load_file(path)
-        apply_rules(model, rules, flat)
+        apply_rules(module, rules, flat)
 
 
 def update_module_from_params(module: nnx.Module, rules: List[ConversionRule], params: dict):

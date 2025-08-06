@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 from flax import nnx
+
 from fabrique.utils import print_var
 
 

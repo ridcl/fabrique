@@ -8,16 +8,17 @@ from gemma.gm.utils import _dtype_params
 
 from fabrique.loading import ConversionRule as R
 from fabrique.loading import update_module_from_params
+from fabrique.models.gemma.load_rules import RULES
+from fabrique.models.gemma.modeling import Transformer
 from fabrique.models.gemma.modules import (
-    Embedder,
     Attention,
     AttentionType,
+    Block,
+    Embedder,
     FeedForward,
     GemmaRMSNorm,
     LayerCache,
-    Block,
 )
-from fabrique.models.gemma.modeling import Transformer
 
 
 def test_embedder():
@@ -35,7 +36,11 @@ def test_embedder():
     emb_nn = _modules.Embedder(
         vocab_size=vocab_size, embed_dim=embed_dim, vision_proj_dim=vision_proj_dim
     )
-    variables = emb_nn.init(key, jnp.ones((seq_len, vision_proj_dim)), method=_modules.Embedder.encode_vision)
+    variables = emb_nn.init(
+        key,
+        jnp.ones((seq_len, vision_proj_dim)),
+        method=_modules.Embedder.encode_vision,
+    )
 
     emb = Embedder(
         vocab_size=vocab_size,
@@ -61,7 +66,9 @@ def test_embedder():
     decoded = emb.decode(vectors)
     assert (decoded_nn == decoded).all()
 
-    vis_encoded_nn = emb_nn.apply(variables, vectors, method=_modules.Embedder.encode_vision)
+    vis_encoded_nn = emb_nn.apply(
+        variables, vectors, method=_modules.Embedder.encode_vision
+    )
     vis_encoded = emb.encode_vision(vectors)
     assert (vis_encoded_nn == vis_encoded).all()
 
@@ -226,7 +233,9 @@ def test_norm():
     with _dtype_params.initialize_param_with_dtype(dtype):
         norm_nn = _layers.RMSNorm()
     # module.init() would set 'scale' to all zeros; we initialize it to random instead
-    variables = {"params": {"scale": jax.random.normal(rngs(), (num_featues,), dtype=dtype)}}
+    variables = {
+        "params": {"scale": jax.random.normal(rngs(), (num_featues,), dtype=dtype)}
+    }
 
     norm = GemmaRMSNorm(
         num_features=num_featues,
@@ -309,26 +318,22 @@ def test_block(dtype: jax.typing.DTypeLike):
 
 def test_transformer():
     rngs = nnx.Rngs(params=116)
-    # param_dtype = jnp.bfloat16
     param_dtype = jnp.bfloat16
-    config = gm.nn.Gemma3_1B.config
-    model = Transformer(config, param_dtype=param_dtype, rngs=rngs)
+    config = gm.nn.Gemma3_4B.config
+    model = nnx.eval_shape(
+        lambda: Transformer(config, param_dtype=param_dtype, rngs=nnx.Rngs(0))
+    )
     model_nn = _transformer.Transformer(config=config)
+    params = gm.ckpts.load_params(gm.ckpts.CheckpointPath.GEMMA3_4B_IT)
 
     tokenizer = gm.text.Gemma3Tokenizer()
-    tokens = jnp.array(tokenizer.encode("Once upon a time", add_bos=True)).reshape(-1, 1)
-    # images = jax.random.randint(key, (1, 900, 900, 3), 0, 255, dtype=jnp.uint8)
-    images = None
-    # positions = None
-    # attention_mask = None
+    tokens = jnp.array(tokenizer.encode("Once upon a time", add_bos=True)).reshape(
+        -1, 1
+    )
+    images = jax.random.randint(rngs.params(), (5, 900, 900, 3), 0, 255, dtype=jnp.uint8)
 
-    params = gm.ckpts.load_params(gm.ckpts.CheckpointPath.GEMMA3_1B_IT)
-    # params = model_nn.init(rngs.params(), tokens=tokens, images=images)["params"]
-    # params = jax.tree.map(lambda x: x.astype(param_dtype), params)
-
-    from fabrique.models.gemma.load_rules import RULES
     update_module_from_params(model, RULES, params)
-
+    model.vision_encoder.rngs = rngs   # otherwise rngs will be abstract array
 
     out_nn = model_nn.apply({"params": params}, tokens=tokens, images=images)
     out = model(tokens=tokens, images=images)

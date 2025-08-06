@@ -87,9 +87,7 @@ class Embedder(nnx.Module):
         #   the text tokens inside `Transformer._include_vision_embeddings`.
         if self.vision_proj_dim:
             # note: keeping the params in float32
-            self.mm_soft_embedding_norm = GemmaRMSNorm(
-                self.vision_proj_dim, rngs=rngs
-            )
+            self.mm_soft_embedding_norm = GemmaRMSNorm(self.vision_proj_dim, rngs=rngs)
             self.mm_input_projection = nnx.Einsum(
                 "...tm,md->...td",
                 kernel_shape=(self.vision_proj_dim, self.embed_dim),

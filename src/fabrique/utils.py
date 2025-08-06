@@ -135,12 +135,7 @@ def set_nested_attr(nested_obj, fields: List[str], val):
     obj = nested_obj
     for field in fields[:-1]:
         index = None
-        is_list_match = None
         if isinstance(field, str) and (m := re.match(LIST_KEY_REGEXP, field)):
-        #     is_list_match = re.match(LIST_KEY_REGEXP, field)
-        # if is_list_match:
-            # sub-object is a list
-            # field, index = is_list_match.groups()
             field, index = m.groups()
             index = int(index)
             ensure_field(obj, field)
@@ -159,7 +154,7 @@ def set_nested_attr(nested_obj, fields: List[str], val):
     last_field = fields[-1]
     ensure_field(obj, last_field)
     old_val = getattr(obj, last_field)
-    if type(old_val) is not type(val):
+    if type(old_val) is not type(val) and not isinstance(old_val, jax.ShapeDtypeStruct):
         logger.warning(
             f"Field {'.'.join(fields)} has type {type(old_val)}, "
             + f"but setting it to value of type {type(val)}"

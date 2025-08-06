@@ -8,13 +8,14 @@ import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import bridge
 from gemma import gm
-from gemma.gm.nn import _config, _layers, _modules, _transformer
+from gemma.gm.nn import _config, _modules, _transformer
 from gemma.gm.nn._transformer import ModelInfo
-from gemma.gm.utils import _dtype_params, _types
+from gemma.gm.utils import _types
 from gemma.gm.vision import _token_utils
 from gemma.multimodal import vision as gemma_vision
 
-from fabrique.loading import ConversionRule as R, update_module_from_params
+from fabrique.loading import ConversionRule as R
+from fabrique.loading import update_module_from_params
 from fabrique.models.gemma.layers import GemmaRMSNorm
 from fabrique.models.gemma.modules import Block, Embedder
 
@@ -89,9 +90,13 @@ class Transformer(nnx.Module):
         )
         # note: we wrap vision encoder to NNX only on this level to keep
         # using the original TransformerConfig class
-        self.vision_encoder = self._wrap_and_init_vision_encoder(self.config.vision_encoder, rngs=rngs)
+        self.vision_encoder = self._wrap_and_init_vision_encoder(
+            self.config.vision_encoder, rngs=rngs
+        )
 
-    def _wrap_and_init_vision_encoder(self, vision_encoder: gemma_vision.SigLiPFromPatches | None, rngs: nnx.Rngs) -> bridge.ToNNX:
+    def _wrap_and_init_vision_encoder(
+        self, vision_encoder: gemma_vision.SigLiPFromPatches | None, rngs: nnx.Rngs
+    ) -> bridge.ToNNX:
         if vision_encoder is None:
             return None
         wrapped = bridge.ToNNX(vision_encoder, rngs=rngs)
@@ -100,7 +105,9 @@ class Transformer(nnx.Module):
             vision_encoder.image_height // vision_encoder.siglip_encoder.patch_size[0]
         )
         num_channels = 3 * vision_encoder.siglip_encoder.patch_size[0] ** 2
-        dummy_patches = jnp.ones((1, 1, num_patches_one_side ** 2, num_channels), dtype=jnp.uint8)
+        dummy_patches = jnp.ones(
+            (1, 1, num_patches_one_side**2, num_channels), dtype=jnp.uint8
+        )
         # note: lazy_init() of vision encoder may take up to a few minutes
         wrapped.lazy_init(patches=dummy_patches, is_training=False)
         return wrapped
@@ -269,14 +276,13 @@ class Transformer(nnx.Module):
             inputs_mask=inputs.inputs_mask,
         )
 
-
     def _merge_mm_embeddings(
         self,
         *,
-        tokens: jax.Array,        # Int['B L'],
-        embeddings: jax.Array,    # Float['B L D'],
-        images: jax.Array,        # UInt8['B N H W C'],
-    ) -> jax.Array:               # Float['B L D']
+        tokens: jax.Array,  # Int['B L'],
+        embeddings: jax.Array,  # Float['B L D'],
+        images: jax.Array,  # UInt8['B N H W C'],
+    ) -> jax.Array:  # Float['B L D']
         """Update the embeddings to include the vision embeddings."""
         # Encode the images
         soft_embeddings = self._encode_vision(images)
@@ -299,7 +305,6 @@ class Transformer(nnx.Module):
         soft_embeddings = self.embedder.encode_vision(soft_embeddings)
         return soft_embeddings
 
-
     def _assert_support_mm(self) -> None:
         if self.config.vision_encoder is None:
             msg = ""
@@ -313,47 +318,9 @@ class Transformer(nnx.Module):
 
 def _make_dummy_images(
     vision_encoder: gemma_vision.SigLiPFromPatches,
-) -> jax.Array:   # Float['B L P D']
+) -> jax.Array:  # Float['B L P D']
     """Make dummy images for initializing the vision encoder."""
     return jnp.zeros(
         (1, 1, vision_encoder.image_height, vision_encoder.image_width, 3),
         dtype=jnp.uint8,
     )
-
-
-
-# TODO:
-# 3. add loader
-# 4. add sampler
-
-
-def main():
-    rngs = nnx.Rngs(params=116)
-    # param_dtype = jnp.bfloat16
-    param_dtype = jnp.bfloat16
-    config = gm.nn.Gemma3_1B.config
-    model = Transformer(config, param_dtype=param_dtype, rngs=rngs)
-    model_nn = _transformer.Transformer(config=config)
-
-    tokenizer = gm.text.Gemma3Tokenizer()
-    tokens = jnp.array(tokenizer.encode("Once upon a time", add_bos=True)).reshape(-1, 1)
-    # images = jax.random.randint(key, (1, 900, 900, 3), 0, 255, dtype=jnp.uint8)
-    images = None
-    positions = None
-    attention_mask = None
-
-    params = gm.ckpts.load_params(gm.ckpts.CheckpointPath.GEMMA3_1B_IT)
-    # params = model_nn.init(rngs.params(), tokens=tokens, images=images)["params"]
-    # params = jax.tree.map(lambda x: x.astype(param_dtype), params)
-
-    from fabrique.models.gemma.load_rules import RULES
-    update_module_from_params(model, RULES, params)
-
-
-    out_nn = model_nn.apply({"params": params}, tokens=tokens, images=images)
-    out = model(tokens=tokens, images=images)
-
-    out_tokens_nn = out_nn.logits.argmax(axis=-1)
-    out_tokens = out.logits.argmax(axis=-1)
-
-    assert jnp.all(out_tokens_nn == out_tokens)

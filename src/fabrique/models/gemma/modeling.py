@@ -1,6 +1,6 @@
 # based on:
 # https://github.com/google-deepmind/gemma/blob/main/gemma/gm/nn/_transformer.py
-from typing import ClassVar
+from typing import ClassVar, Any
 
 import einops
 import jax
@@ -210,6 +210,20 @@ class Transformer(nnx.Module):
             cache=None if cache is None else new_cache,
             hidden_states=x if return_hidden_states else None,
         )
+
+    def init_cache(
+        self,
+        *,
+        batch_size: int,
+        dtype: jnp.dtype[Any],
+        cache_length: int
+  ) -> _config.Cache:
+        cache = self.config.init_cache(
+            batch_size=batch_size,
+            dtype=dtype,
+            cache_length=cache_length,
+        )
+        return cache
 
     def _encode_and_get_inputs(
         self,

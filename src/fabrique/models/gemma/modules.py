@@ -538,7 +538,10 @@ class Block(nnx.Module):
         return cache, outputs
 
 
-def main():
+
+###############################################################################
+
+def example():
     rngs = nnx.Rngs(params=0)
     batch_size = 1
     seq_len = 5

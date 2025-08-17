@@ -68,12 +68,16 @@ def print_var(name: str, x):
     (which you normally shouldn't do)
     """
     if x is not None:
-        print(f"{name}: mean={x.mean()}, shape={x.shape}, dtype={x.dtype}")
+        jax.debug.print(
+            "{}: mean={}, var={}, shape={}, dtype={}",
+            name, x.mean(), x.var(), x.shape, x.dtype
+        )
     else:
-        print(f"{name} = {x}")
+        jax.debug.print("{} = {}", name, x)
 
 
 LIST_KEY_REGEXP = r"^([a-zA-Z0-9]+)\[(\d+)\]"
+# DICT_KEY_REGEXP = r"^([a-zA-Z0-9]+)\[(\d+)\]"
 
 
 def set_nested(nested: Dict, keys: List[str], val):
@@ -131,12 +135,8 @@ def set_nested_attr(nested_obj, fields: List[str], val):
     obj = nested_obj
     for field in fields[:-1]:
         index = None
-        is_list_match = None
-        if isinstance(field, str):
-            is_list_match = re.match(LIST_KEY_REGEXP, field)
-        if is_list_match:
-            # sub-object is a list
-            field, index = is_list_match.groups()
+        if isinstance(field, str) and (m := re.match(LIST_KEY_REGEXP, field)):
+            field, index = m.groups()
             index = int(index)
             ensure_field(obj, field)
             lst = getattr(obj, field)
@@ -144,13 +144,17 @@ def set_nested_attr(nested_obj, fields: List[str], val):
                 lst
             ), f"Trying to set {type(obj)}.{field}[{index}], but the list only has length of {len(lst)}"
             obj = lst[index]
+        elif isinstance(obj, dict):
+            # set key instead of field
+            assert field in obj, f"Nested dict doesn't have key {field}"
+            obj = obj[field]
         else:
             ensure_field(obj, field)
             obj = getattr(obj, field)
     last_field = fields[-1]
     ensure_field(obj, last_field)
     old_val = getattr(obj, last_field)
-    if type(old_val) is not type(val):
+    if type(old_val) is not type(val) and not isinstance(old_val, jax.ShapeDtypeStruct):
         logger.warning(
             f"Field {'.'.join(fields)} has type {type(old_val)}, "
             + f"but setting it to value of type {type(val)}"
@@ -158,11 +162,11 @@ def set_nested_attr(nested_obj, fields: List[str], val):
     if (
         isinstance(old_val, jax.Array)
         and isinstance(val, jax.Array)
-        and old_val.shape != val.shape
+        and (old_val.shape != val.shape or old_val.dtype != val.dtype)
     ):
         logger.warning(
-            f"Field {'.'.join(fields)} has shape {old_val.shape}, "
-            + f"but setting it to array of shape {val.shape}"
+            f"Field {'.'.join(fields)} has shape={old_val.shape} and dtype={old_val.dtype}, "
+            + f"but setting it to array of shape={val.shape} and dtype={val.dtype}"
         )
     setattr(obj, last_field, val)
     return nested_obj

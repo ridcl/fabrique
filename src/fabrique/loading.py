@@ -39,6 +39,9 @@ class ConversionRule:
     def safe_regexp(self):
         pat = self.safe_pattern
         pat = pat.replace(".", "\\.")
+        pat = pat.replace("{i}", "(?P<i>\\d+)")
+        pat = pat.replace("{j}", "(?P<j>\\d+)")
+        pat = pat.replace("{k}", "(?P<k>\\d+)")
         pat = pat.replace("{n}", "(?P<n>\\d+)")
         pat = "^" + pat + "$"
         return re.compile(pat)
@@ -60,21 +63,33 @@ def convert_safetensor(rules: List[ConversionRule], safe_key: str, safe_val):
         path_val = maybe_apply_rule(rule, safe_key, safe_val)
         if path_val:
             return path_val
+    if isinstance(safe_val, jax.Array):
+        val_error_str = f"The value is an array with shape={safe_val.shape} " + \
+            f"and dtype={safe_val.dtype}"
+    else:
+        val_error_str = f"The value is of type {type(safe_val)}"
     raise ValueError(
-        f"Couldn't find a rule for safetensors key {safe_key} "
-        + f"and value of shape {safe_val.shape}"
+        f"Couldn't find a rule for safetensors key {safe_key}. {val_error_str}"
     )
 
 
 def apply_rules(
-    model: nnx.Module, rules: List[ConversionRule], flat: Dict[str, jax.Array]
+    module: nnx.Module, rules: List[ConversionRule], flat: Dict[str, jax.Array]
 ):
     for safe_key, safe_val in flat.items():
         path, val = convert_safetensor(rules, safe_key, safe_val)
-        if val is not IGNORE:
+        if val is IGNORE:
+            continue
+        elif isinstance(val, jax.Array):
+            # setting paramater
             fab_keys = path.split(".")
             fab_keys += ["value"]  # set to the .value field
-            set_nested_attr(model, fab_keys, val)
+            set_nested_attr(module, fab_keys, val)
+        elif isinstance(val, dict):
+            # setting value as is
+            # used e.g. when filling ToNNX-wrapperd Linen modules
+            fab_keys = path.split(".")
+            set_nested_attr(module, fab_keys, val)
 
 
 ###############################################################################
@@ -82,8 +97,8 @@ def apply_rules(
 ###############################################################################
 
 
-def update_model_from_safe(
-    model: nnx.Module, rules: List[ConversionRule], model_dir: str
+def update_module_from_safe(
+    module: nnx.Module, rules: List[ConversionRule], model_dir: str
 ):
     """
     Update Flax NNX model from a Huggingface model directory
@@ -101,7 +116,20 @@ def update_model_from_safe(
         raise ValueError(f"Can't find safetensor files in {model_dir}")
     for path in tqdm(safe_files):
         flat = st.load_file(path)
-        apply_rules(model, rules, flat)
+        apply_rules(module, rules, flat)
+
+
+def update_module_from_params(module: nnx.Module, rules: List[ConversionRule], params: dict):
+    """
+    Update Flax NNX module from a Flax Linen param tree
+    """
+
+    def keys_to_path(keys):
+        return ".".join(key.key for key in keys)
+
+    flat_with_keys, _ = jax.tree.flatten_with_path(params)
+    flat = {keys_to_path(key): val for key, val in flat_with_keys}
+    apply_rules(module, rules, flat)
 
 
 ###############################################################################
@@ -172,7 +200,7 @@ def from_pretrained(model_id: str, revision: str | None = None, **model_args):
     model_args = tweak_model_args(model_args)
     args = cfg.model_args_class.from_file(config_file, **model_args)
     model = cfg.model_class(args)
-    update_model_from_safe(model, cfg.rules, model_dir)
+    update_module_from_safe(model, cfg.rules, model_dir)
     # load chat template
     # note: in huggingface/transformers, chat template is loaded into tokenizer,
     # but we use huggingface/tokenizers, which are slightly different.

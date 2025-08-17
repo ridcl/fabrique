@@ -538,8 +538,8 @@ class Block(nnx.Module):
         return cache, outputs
 
 
-
 ###############################################################################
+
 
 def example():
     rngs = nnx.Rngs(params=0)

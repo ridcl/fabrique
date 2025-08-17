@@ -1,23 +1,23 @@
 from functools import partial
 
-import numpy as np
+import einops
 import jax
 import jax.lax as lax
 import jax.numpy as jnp
-import einops
+import numpy as np
 from flax import nnx, struct
 from gemma import gm
-from gemma.gm.utils import _types
 from gemma.gm.data import _functional
 from gemma.gm.text._prefill import _make_full_attention_mask
+from gemma.gm.utils import _types
+from PIL import Image
 
 from fabrique.loading import update_module_from_params
 from fabrique.models.gemma.load_rules import RULES
 from fabrique.models.gemma.modeling import Transformer
 
-
-LayerCache = dict[str, jax.Array]   # gemma.gm.nn._modules.LayerCache
-Cache = dict[str, LayerCache]       # gemma.gm.nn._config.Cache
+LayerCache = dict[str, jax.Array]  # gemma.gm.nn._modules.LayerCache
+Cache = dict[str, LayerCache]  # gemma.gm.nn._config.Cache
 
 
 def load_gemma(variant: str):
@@ -42,10 +42,9 @@ def load_gemma(variant: str):
     )
     params = gm.ckpts.load_params(ckpt)
     update_module_from_params(model, RULES, params)
-    model.vision_encoder.rngs = nnx.Rngs(0)   # otherwise rngs will be abstract array
+    model.vision_encoder.rngs = nnx.Rngs(0)  # otherwise rngs will be abstract array
     tokenizer = gm.text.Gemma3Tokenizer()
     return tokenizer, model
-
 
 
 def sample_token(
@@ -88,22 +87,10 @@ def sample_token(
     return next_token
 
 
-# @struct.dataclass
-# class SampleState:
-#     cur_len: jnp.ndarray
-#     sequences: jnp.ndarray
-#     running_token: jnp.ndarray
-#     is_sent_finished: jnp.ndarray
-#     # start_pos: int
-#     cache: Cache
-#     model_state: nnx.State
-#     static: nnx.GraphDef
-#     prng_key: jnp.ndarray
-
-
 @struct.dataclass(kw_only=True)
 class SamplingState:
-    """Internal sampling state.
+    """
+    Internal sampling state.
 
     Attributes:
         step: Number of decoding steps taken so far (between [0,
@@ -122,24 +109,24 @@ class SamplingState:
         full_attention_mask: Pre-computed attention mask for the full sequence.
     """
 
-    step: jax.Array                 # Int['']
-    done: jax.Array                 # Bool['B']
-    last_token: jax.Array           # Int['B']
-    last_token_pos: jax.Array       # Int['B']
-    predicted_tokens: jax.Array     # Int['B max_out_length']
+    step: jax.Array  # Int['']
+    done: jax.Array  # Bool['B']
+    last_token: jax.Array  # Int['B']
+    last_token_pos: jax.Array  # Int['B']
+    predicted_tokens: jax.Array  # Int['B max_out_length']
     cache: Cache
     rng: jax.random.PRNGKey
     # static values:
-    init_cache_length: jax.Array    # Int['']
+    init_cache_length: jax.Array  # Int['']
     full_attention_mask: jax.Array  # Bool['B cache_length']
 
     @property
-    def used_cache_length(self) -> jax.Array:           # Int['']
+    def used_cache_length(self) -> jax.Array:  # Int['']
         """Length of the cache currently used."""
         return self.init_cache_length + self.step
 
     @property
-    def attention_mask_for_step(self) -> jax.Array:    # Bool['B cache_length']
+    def attention_mask_for_step(self) -> jax.Array:  # Bool['B cache_length']
         """Attention mask for the current step."""
         # Select the slice of the attention mask for the current step.
         # For step == 2, init_cache_length == 5:
@@ -154,17 +141,17 @@ class SamplingState:
         return attention_mask
 
 
-@partial(nnx.jit, static_argnums=(2, 3, 4, 5, 6, 7))
+@partial(nnx.jit, static_argnums=(3, 4, 5, 6, 7, 8))
 def sample(
     model,
     prompt_tokens: jax.Array,
-    pad_token_id: int,
-    eos_token_id: int | tuple[int],
+    images: jax.Array | None = None,
+    eos_token_id: int | tuple[int] = 1,
     max_length: int = 512,
     temperature: float = 1.0,
     top_p: float = 1.0,
     top_k: int = 50,
-    images=None,
+    cache_dtype: jnp.dtype = jnp.bfloat16,
     rng: jax.Array = jax.random.key(0),
 ):
 
@@ -193,7 +180,7 @@ def sample(
 
         logits = out.logits
         # Logit is `B L V` with `L=1`, so collapse the L dimension.
-        logits = einops.rearrange(logits, 'B 1 V -> B V')
+        logits = einops.rearrange(logits, "B 1 V -> B V")
         # if self.forbidden_tokens:  # Eventually filter out the forbidden tokens.
         #     logits = logits.at[:, self.forbidden_tokens].set(-jnp.inf)
 
@@ -229,26 +216,21 @@ def sample(
             full_attention_mask=state.full_attention_mask,
         )
 
-
     bsz = prompt_tokens.shape[0]
     cache_length = max_length
     eos_token_ids = jnp.array(eos_token_id)
-
-    # # TODO: this doesn't take mm into account
-    # # per batch-item holding current token in loop
-    # sequences = jnp.full((bsz, max_length), pad_token_id, dtype=jnp.int32)
-    # sequences = lax.dynamic_update_slice(sequences, prompt_tokens, (0, 0))
 
     # as a workaround for stateful models with Rngs (used in ToNNX submodule),
     # we split the graphdef and model state, and then just
     # merge them in sample_body_fn()
     static, model_state = nnx.split(model, ...)
 
-    # TODO: accept dtype as arg
-    cache = model.init_cache(batch_size=bsz, dtype=jnp.bfloat16, cache_length=max_length)
+    cache = model.init_cache(batch_size=bsz, dtype=cache_dtype, cache_length=max_length)
 
     # input = _types.Input(text=sequences, images=images, config=model.config.input_config)
-    input = _types.Input(text=prompt_tokens, images=images, config=model.config.input_config)
+    input = _types.Input(
+        text=prompt_tokens, images=images, config=model.config.input_config
+    )
 
     # prefill cache
     out = model(
@@ -258,16 +240,18 @@ def sample(
         cache=cache,
         positions=input.positions,
         # attention_mask=input.attention_mask,
-        attention_mask=_functional.pad(input.attention_mask, max_length=cache_length).astype(int),
-        return_last_only=True
+        attention_mask=_functional.pad(
+            input.attention_mask, max_length=cache_length
+        ).astype(int),
+        return_last_only=True,
     )
 
     used_cache_length = input.last_token_pos.max()
     end_index = used_cache_length
     cache = out.cache
     for layer_data in cache.values():
-        layer_data['end_index'] = jnp.full_like(
-            layer_data['end_index'], fill_value=end_index
+        layer_data["end_index"] = jnp.full_like(
+            layer_data["end_index"], fill_value=end_index
         )
 
     # We follow logic and notation of the original sampler implementation in Gemma,
@@ -275,12 +259,14 @@ def sample(
     # below is actually a padding mask (shape B x L) that is combined with
     # causal mask (a.k.a. step mask) in `SamplingState.attention_mask_for_step()`
     # to let model know what it's allowed to look at. Note that causal mask already
-    # hides all future tokens, so this padding mask is only useful to hide _past_
-    # tokens. See the original implementation for the details of what this
+    # hides all future tokens, so this padding mask is only used to hide _past_
+    # tokens, e.g. padded tokens in a batch of prompts of differrnt lengths.
+    # See the original implementation for the details of what this
     # mask actually looks like for sequences of different length:
     # https://github.com/google-deepmind/gemma/blob/532b12d81ae077b7cd2f9d921ae50eceb9a83d9e/gemma/gm/text/_prefill.py#L283
-    full_attention_mask = _make_full_attention_mask(input=input, prev_turns=None, cache_length=max_length)
-
+    full_attention_mask = _make_full_attention_mask(
+        input=input, prev_turns=None, cache_length=max_length
+    )
 
     # initialize state
     state = SamplingState(
@@ -289,14 +275,7 @@ def sample(
         # Last token for autoregressive sampling.
         last_token=input.last_token,
         last_token_pos=input.last_token_pos,
-        # In theory, those values only need to be `B max_new_tokens`, however,
-        # to avoid re-compilation when prompt length and max_new_tokens changes,
-        # we set this to the fixed maximum static size.
         predicted_tokens=jnp.zeros((bsz, max_length), dtype=jnp.int32),
-        # predicted_logits=jnp.zeros(
-        #     (batch_size, self.max_out_length, out.logits.shape[-1]),
-        #     dtype=jnp.float32,
-        # ),
         cache=cache,
         rng=rng,
         full_attention_mask=full_attention_mask,
@@ -304,63 +283,80 @@ def sample(
     )
 
     state = jax.lax.while_loop(sample_cond_fn, sample_body_fn, state)
-    # state = debug_while_loop(greedy_search_cond_fn, greedy_search_body_fn, state)
     return state.predicted_tokens
 
 
-################################################################
-
-
-def encode_batch(tokenizer: gm.text.Gemma3Tokenizer, prompts: list[str], add_bos=False, add_eos=False):
+def encode_batch(
+    tokenizer: gm.text.Gemma3Tokenizer, prompts: list[str], add_bos=False, add_eos=False
+):
     bsz = len(prompts)
-    token_lists = [tokenizer.encode(prompt, add_bos=add_bos, add_eos=add_eos) for prompt in prompts]
+    token_lists = [
+        tokenizer.encode(prompt, add_bos=add_bos, add_eos=add_eos) for prompt in prompts
+    ]
     max_prompt_length = max(len(lst) for lst in token_lists)
     tokens = np.full((bsz, max_prompt_length), fill_value=tokenizer.special_tokens.PAD)
     for i in range(bsz):
         length = len(token_lists[i])
-        tokens[i][: length] = token_lists[i]
+        tokens[i][:length] = token_lists[i]
     return jnp.array(tokens)
 
 
+class Sampler:
 
-def example():
-    from PIL import Image
+    def __init__(self, tokenizer, model):
+        self.tokenizer = tokenizer
+        self.model = model
 
-    tokenizer, model = load_gemma("4b")
-    prompts = [
-        #"""<start_of_turn>user\nWrite a poem about a stool<end_of_turn>\n<start_of_turn>model\n""",
-        """<start_of_turn>user\n<start_of_image>Describe the image in a few sentences<end_of_turn>\n<start_of_turn>model\n"""
-    ]
-    prompt_tokens = encode_batch(tokenizer, prompts, add_bos=True)
-    images = jnp.array(Image.open("tests/bird.jpg"))[None, None, ...]
+    @staticmethod
+    def load_gemma(gemma3_variant: str):
+        tokenizer, model = load_gemma(gemma3_variant)
+        return Sampler(tokenizer=tokenizer, model=model)
 
-    # jax.config.update("jax_explain_cache_misses", True)
+    def __repr__(self):
+        return "Sampler[Gemma3]"
 
-    rngs = nnx.Rngs(0)
-
-    sequences = sample(
-        model,
-        prompt_tokens,
-        images=images,
-        pad_token_id=tokenizer.special_tokens.PAD,
-        eos_token_id=(tokenizer.special_tokens.EOS, tokenizer.special_tokens.END_OF_TURN,),
-        # eos_token_id=(tokenizer.special_tokens.EOS, tokenizer.special_tokens.END_OF_TURN),
-        max_length=512,
-        temperature=1,
-        # top_p=0.5,
-        # top_k=3,
-        rng=rngs()
-    )
-    print(tokenizer.decode(sequences[0]))
-    print(tokenizer.decode(sequences[1]))
-
-
-    pad_token_id=tokenizer.special_tokens.PAD
-    eos_token_id=(tokenizer.special_tokens.EOS, tokenizer.special_tokens.END_OF_TURN)
-    max_length = 1024
-    temperature: float = 1.0
-    top_p: float = 1.0
-    top_k: int = 50
-    rngs: nnx.Rngs = nnx.Rngs(0)
-    rng = rngs()
-
+    def sample(
+        self,
+        prompt: str,
+        images: jax.Array | Image.Image | list[Image.Image] | None = None,
+        add_bos: bool = True,
+        add_eos: bool = False,
+        max_length: int = 4096,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
+        top_k: int = 50,
+        cache_dtype: jnp.dtype = jnp.bfloat16,
+        rngs: nnx.Rngs = nnx.Rngs(0),
+    ):
+        prompt_tokens = jnp.array(
+            self.tokenizer.encode(prompt, add_bos=add_bos, add_eos=add_eos)
+        )[None, :]
+        if isinstance(images, Image.Image):
+            images = [images]
+        if isinstance(images, list):
+            assert all(isinstance(img, Image.Image) for img in images)
+            assert len(images) > 0
+            img_size = images[0].size
+            assert all(
+                img.size == img_size for img in images
+            ), "All images must have the same size"
+            # array of size (B N H W C), where B=1
+            images = jnp.stack([jnp.array(img) for img in images])[None, ...]
+        st = self.tokenizer.special_tokens
+        out_tokens = sample(
+            self.model,
+            prompt_tokens,
+            images=images,
+            eos_token_id=(
+                st.EOS,
+                st.END_OF_TURN,
+            ),
+            max_length=max_length,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            cache_dtype=cache_dtype,
+            rng=rngs(),
+        )
+        completion = self.tokenizer.decode(out_tokens[0])
+        return completion

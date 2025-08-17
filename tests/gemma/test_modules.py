@@ -327,7 +327,7 @@ def test_transformer():
     params = gm.ckpts.load_params(gm.ckpts.CheckpointPath.GEMMA3_4B_IT)
 
     tokenizer = gm.text.Gemma3Tokenizer()
-    tokens = jnp.array(tokenizer.encode("Once upon a time", add_bos=True))[None, :]
+    tokens = jnp.array(tokenizer.encode("Describe the image <start_of_image>", add_bos=True))[None, :]
     images = jax.random.randint(rngs.params(), (1, 900, 900, 3), 0, 255, dtype=jnp.uint8)
 
     update_module_from_params(model, RULES, params)

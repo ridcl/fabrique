@@ -10,8 +10,10 @@ from jinja2 import Environment
 from fabrique import LLM, ChatMessage
 from fabrique.models.gemma.load_rules import CHAT_TEMPLATE
 from fabrique.models.gemma.sampler import Sampler, encode_batch
+from fabrique.lora import LoRAEinsum
 
-BATCH_SIZE = 2
+
+BATCH_SIZE = 1
 TOTAL_STEPS = 1000
 NUM_EPOCHS = 10
 MAX_SEQ_LENGTH = 4096
@@ -64,12 +66,15 @@ def loss_fn(model, batch: dict):
 
 
 
-predicate = nnx.All(nnx.Param, nnx.PathContains("mm_input_projection"))
+trainable = nnx.All(
+    nnx.Param,
+    nnx.Any(nnx.PathContains("lora_a"), nnx.PathContains("lora_b"))
+)
 
 
 @nnx.jit
 def train_step(model, batch: dict, optimizer: nnx.Optimizer, metrics: nnx.MultiMetric):
-    grad_fn = nnx.value_and_grad(loss_fn, has_aux=True, argnums=nnx.DiffState(0, predicate))
+    grad_fn = nnx.value_and_grad(loss_fn, has_aux=True, argnums=nnx.DiffState(0, trainable))
     (loss, _), grad = grad_fn(model, batch)
     optimizer.update(model, grad)
     metrics.update(loss=loss)
@@ -78,7 +83,7 @@ def train_step(model, batch: dict, optimizer: nnx.Optimizer, metrics: nnx.MultiM
 
 def train(sampler: Sampler, ds: datasets.Dataset):
     model = sampler.model
-    optimizer = nnx.Optimizer(model, optax.sgd(1e-3), wrt=predicate)
+    optimizer = nnx.Optimizer(model, optax.sgd(1e-3), wrt=trainable)
     metrics = nnx.MultiMetric(
         loss=nnx.metrics.Average("loss"),
     )
@@ -88,10 +93,10 @@ def train(sampler: Sampler, ds: datasets.Dataset):
             break
         metrics.reset()
         for i, orig_batch in enumerate(ds.iter(batch_size=BATCH_SIZE)):
-            batch = tokenize_batch(sampler, orig_batch)
+            batch = tokenize_batch(sampler, orig_batch, truncate=2048)
             loss = train_step(model, batch, optimizer, metrics)
             print(
-                f"Epoch {epoch}, step {step}: avg_loss = {metrics.compute()['loss']:.2f}; batch_loss = {loss:.2f}"
+                f"Epoch {epoch}, step {step}: avg_loss = {metrics.compute()['loss'].item():.2f}; batch_loss = {loss.item():.2f}"
             )
             with summary_writer.as_default():
                 tf.summary.scalar("loss", loss, metrics.compute()["loss"])
@@ -104,14 +109,41 @@ def train(sampler: Sampler, ds: datasets.Dataset):
 def main():
     prompt = """<start_of_turn>user\nWrite a function to retrieve title of the Wikipedia's main page\n<start_of_turn>model\n"""
     sampler = Sampler.load_gemma("4b")
+    model = sampler.model
 
     output_before_training = sampler.sample(prompt, max_length=512)
+
+    rngs = nnx.Rngs(0)
+    for i in range(len(model.blocks)):
+        model.blocks[i].attn.q_einsum = LoRAEinsum(
+            rank=16, base_module=model.blocks[i].attn.q_einsum, rngs=rngs
+        )
+        model.blocks[i].attn.kv_einsum = LoRAEinsum(
+            rank=16, base_module=model.blocks[i].attn.kv_einsum, rngs=rngs
+        )
 
     ds = datasets.load_dataset("jtatman/python-code-dataset-500k")["train"]
     train(sampler, ds)
 
-    output_after_training = llm.generate(example_chat, max_length=512)
-    print(f"-" * 30 + " before training " + "-" * 30)
-    print(output_before_training.content)
-    print(f"-" * 30 + " after training " + "-" * 30)
-    print(output_after_training.content)
+
+    orig_batch = next(ds.iter(batch_size=BATCH_SIZE))
+    batch = tokenize_batch(sampler, orig_batch)
+    optimizer = nnx.Optimizer(model, optax.sgd(1e-3), wrt=trainable)
+    metrics = nnx.MultiMetric(
+        loss=nnx.metrics.Average("loss"),
+    )
+    train_step(model, batch, optimizer, metrics)
+
+
+    grad_fn = nnx.value_and_grad(loss_fn, has_aux=True, argnums=nnx.DiffState(0, trainable))
+    (loss, _), grad = grad_fn(model, batch)
+
+
+
+    train(sampler, ds)
+
+    # output_after_training = llm.generate(example_chat, max_length=512)
+    # print(f"-" * 30 + " before training " + "-" * 30)
+    # print(output_before_training.content)
+    # print(f"-" * 30 + " after training " + "-" * 30)
+    # print(output_after_training.content)

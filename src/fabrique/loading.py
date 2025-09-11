@@ -127,7 +127,13 @@ def update_module_from_params(module: nnx.Module, rules: List[ConversionRule], p
     def keys_to_path(keys):
         return ".".join(key.key for key in keys)
 
-    flat_with_keys, _ = jax.tree.flatten_with_path(params)
+    state = nnx.state(module)                   # the model's state, a pure pytree
+    pspecs = nnx.get_partition_spec(state)      # strip out the annotations from state
+    # TODO: use mesh context manager (from outside?)
+    # TODO: move to apply_rules or somewhere to first map path in params and in model
+    # TODO: or maybe rework the whole loading mechanism
+    sharded_params = jax.lax.with_sharding_constraint(params, pspecs.raw_mapping)
+    flat_with_keys, _ = jax.tree.flatten_with_path(sharded_params)
     flat = {keys_to_path(key): val for key, val in flat_with_keys}
     apply_rules(module, rules, flat)
 

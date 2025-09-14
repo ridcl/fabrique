@@ -70,8 +70,6 @@ def test_sampler_class():
     prompt = """<start_of_turn>user\n<start_of_image>Describe the image in a few sentences<end_of_turn>\n<start_of_turn>model\n"""
     image = Image.open("tests/bird.jpg")
 
-    # jax.config.update("jax_explain_cache_misses", True)
-
     rngs = nnx.Rngs(0)
 
     completion = sampler.sample(

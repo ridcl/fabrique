@@ -23,7 +23,9 @@ from fabrique.utils import set_nested_attr
 
 @dataclass
 class RuleIgnore:
-    pass
+
+    def __bool__(self):
+        return False
 
 
 IGNORE = RuleIgnore()

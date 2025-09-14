@@ -179,18 +179,18 @@ class Attention(nnx.Module):
             self.qkv_einsum = einsum(
                 "BTD,SNDH->SBTNH",
                 kernel_shape=(3, self.num_heads, self.features, self.head_dim),
-                kernel_init=nnx.with_partitioning(init_fn, (None, 'model'))
+                kernel_init=nnx.with_partitioning(init_fn, ("model", None, None))
             )
         else:
             self.q_einsum = einsum(
                 "BTD,NDH->BTNH",
                 kernel_shape=(self.num_heads, self.features, self.head_dim),
-                kernel_init=nnx.with_partitioning(init_fn, (None, 'model'))
+                kernel_init=nnx.with_partitioning(init_fn, ("model", None, None))
             )
             self.kv_einsum = einsum(
                 "BSD,CKDH->CBSKH",
                 kernel_shape=(2, self.num_kv_heads, self.features, self.head_dim),
-                kernel_init=nnx.with_partitioning(init_fn, (None, 'model'))
+                kernel_init=nnx.with_partitioning(init_fn, ("model", None, None))
             )
         if self.use_qk_norm:
             self._query_norm = GemmaRMSNorm(

@@ -20,7 +20,7 @@ LayerCache = dict[str, jax.Array]  # gemma.gm.nn._modules.LayerCache
 Cache = dict[str, LayerCache]  # gemma.gm.nn._config.Cache
 
 
-def load_gemma(variant: str):
+def load_gemma(variant: str, *, mesh: jax.sharding.Mesh | None = None):
     match variant.lower():
         case "1b":
             config = gm.nn.Gemma3_1B.config
@@ -41,7 +41,7 @@ def load_gemma(variant: str):
         lambda: Transformer(config, param_dtype=param_dtype, rngs=nnx.Rngs(0))
     )
     params = gm.ckpts.load_params(ckpt)
-    update_module_from_params(model, RULES, params)
+    update_module_from_params(model, RULES, params, mesh=mesh)
     model.vision_encoder.rngs = nnx.Rngs(0)  # otherwise rngs will be abstract array
     tokenizer = gm.text.Gemma3Tokenizer()
     return tokenizer, model
@@ -312,8 +312,8 @@ class Sampler:
         self.model = model
 
     @staticmethod
-    def load_gemma(gemma3_variant: str):
-        tokenizer, model = load_gemma(gemma3_variant)
+    def load_gemma(gemma3_variant: str, mesh: jax.sharding.Mesh | None = None):
+        tokenizer, model = load_gemma(gemma3_variant, mesh=mesh)
         return Sampler(tokenizer=tokenizer, model=model)
 
     def __repr__(self):

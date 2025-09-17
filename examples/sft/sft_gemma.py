@@ -1,6 +1,8 @@
 import math
 
 import datasets
+import numpy as np
+import jax
 import jax.numpy as jnp
 import optax
 import tensorflow as tf  # for logging
@@ -108,8 +110,21 @@ def train(sampler: Sampler, ds: datasets.Dataset):
 
 def main():
     prompt = """<start_of_turn>user\nWrite a function to retrieve title of the Wikipedia's main page\n<start_of_turn>model\n"""
-    sampler = Sampler.load_gemma("4b")
+    device_arr = np.array(jax.devices())[None, :]
+    mesh = jax.sharding.Mesh(devices=device_arr, axis_names=("data", "model"))
+    sampler = Sampler.load_gemma("4b", mesh=mesh)
+    # sampler = Sampler.load_gemma("4b", mesh=None)
     model = sampler.model
+    model(jnp.ones((1, 10), dtype=jnp.int32))
+
+    # TODO: shard input?
+
+    def foo(model, x):
+        # model.vision_encoder is nnx.bridge.ToNNX object, and it requires
+        # Rngs to be re-created inside of this traced context
+        model.vision_encoder.rngs = nnx.Rngs(0)
+        return model(x)
+    out = nnx.jit(foo)(model, jnp.ones((1, 10), dtype=jnp.int32))
 
     output_before_training = sampler.sample(prompt, max_length=512)
 

@@ -1,12 +1,12 @@
 import math
 
-import datasets
 import numpy as np
 import jax
 import jax.numpy as jnp
 import optax
 import tensorflow as tf  # for logging
 from flax import nnx
+from datasets import load_dataset, Dataset
 from jinja2 import Environment
 
 from fabrique import LLM, ChatMessage
@@ -30,12 +30,12 @@ def tokenize_batch(
     sampler: Sampler, batch: dict, pad_to_multiple_of=128, truncate=MAX_SEQ_LENGTH
 ):
     texts = []
-    for sys, inst, outp in zip(batch["system"], batch["instruction"], batch["output"]):
+    for img, question, answer in zip(batch["image"], batch["question"], batch["answer"]):
         text = chat_template.render(
             messages=[
-                ChatMessage(role="system", content=sys),
-                ChatMessage(role="user", content=inst),
-                ChatMessage(role="assistant", content=outp),
+                ChatMessage(role="user", content=img),
+                ChatMessage(role="user", content=question),
+                ChatMessage(role="assistant", content=answer),
             ]
         )
         texts.append(text)
@@ -83,7 +83,7 @@ def train_step(model, batch: dict, optimizer: nnx.Optimizer, metrics: nnx.MultiM
     return loss
 
 
-def train(sampler: Sampler, ds: datasets.Dataset):
+def train(sampler: Sampler, ds: Dataset):
     model = sampler.model
     optimizer = nnx.Optimizer(model, optax.sgd(1e-3), wrt=trainable)
     metrics = nnx.MultiMetric(
@@ -109,22 +109,13 @@ def train(sampler: Sampler, ds: datasets.Dataset):
 
 
 def main():
+    # TODO: train on VQA
     prompt = """<start_of_turn>user\nWrite a function to retrieve title of the Wikipedia's main page\n<start_of_turn>model\n"""
     device_arr = np.array(jax.devices())[None, :]
-    mesh = jax.sharding.Mesh(devices=device_arr, axis_names=("data", "model"))
+    # mesh = jax.sharding.Mesh(devices=device_arr, axis_names=("data", "model"))
+    mesh = None
     sampler = Sampler.load_gemma("4b", mesh=mesh)
-    # sampler = Sampler.load_gemma("4b", mesh=None)
     model = sampler.model
-    model(jnp.ones((1, 10), dtype=jnp.int32))
-
-    # TODO: shard input?
-
-    def foo(model, x):
-        # model.vision_encoder is nnx.bridge.ToNNX object, and it requires
-        # Rngs to be re-created inside of this traced context
-        model.vision_encoder.rngs = nnx.Rngs(0)
-        return model(x)
-    out = nnx.jit(foo)(model, jnp.ones((1, 10), dtype=jnp.int32))
 
     output_before_training = sampler.sample(prompt, max_length=512)
 
@@ -137,28 +128,12 @@ def main():
             rank=16, base_module=model.blocks[i].attn.kv_einsum, rngs=rngs
         )
 
-    ds = datasets.load_dataset("jtatman/python-code-dataset-500k")["train"]
+    #  TODO: use full dataset
+    ds = load_dataset("flaviagiammarino/vqa-rad", split="train[:200]")
     train(sampler, ds)
 
+    output_after_training = sampler.sample(prompt, max_length=512)
 
-    orig_batch = next(ds.iter(batch_size=BATCH_SIZE))
-    batch = tokenize_batch(sampler, orig_batch)
-    optimizer = nnx.Optimizer(model, optax.sgd(1e-3), wrt=trainable)
-    metrics = nnx.MultiMetric(
-        loss=nnx.metrics.Average("loss"),
-    )
-    train_step(model, batch, optimizer, metrics)
+    print("\033[94m" + output_before_training[:400] + "\033[0m")
+    print("\033[92m" + output_after_training[:400] + "\033[0m")
 
-
-    grad_fn = nnx.value_and_grad(loss_fn, has_aux=True, argnums=nnx.DiffState(0, trainable))
-    (loss, _), grad = grad_fn(model, batch)
-
-
-
-    train(sampler, ds)
-
-    # output_after_training = llm.generate(example_chat, max_length=512)
-    # print(f"-" * 30 + " before training " + "-" * 30)
-    # print(output_before_training.content)
-    # print(f"-" * 30 + " after training " + "-" * 30)
-    # print(output_after_training.content)

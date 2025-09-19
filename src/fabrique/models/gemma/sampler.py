@@ -171,8 +171,8 @@ def sample(
         """Single sampling step."""
 
         model = nnx.merge(static, model_state)
-        if hasattr(model, "vision_encoder") and isinstance(model.vision_encoder, nnx.bridge.ToNNX):
-            model.vision_encoder.rngs = nnx.Rngs(0)  # hack to fix tracing context error
+        # if hasattr(model, "vision_encoder") and isinstance(model.vision_encoder, nnx.bridge.ToNNX):
+        #     model.vision_encoder.rngs = nnx.Rngs(0)  # hack to fix tracing context error
         out = model(
             tokens=state.last_token[..., None],
             cache=state.cache,

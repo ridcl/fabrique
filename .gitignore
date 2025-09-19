@@ -148,11 +148,11 @@ _data/
 app.logs
 
 .idea/
-/experiments/hrqa/app/notion-kb/
 
 # foreign files
 __MACOSX/
 class_by_href_text/
 
 # special files
+output/
 _main.py

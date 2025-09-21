@@ -103,44 +103,10 @@ def encode_batch(
     return tokenized_sequences, completion_mask
 
 
-# def tokenize_batch(
-#     sampler: Sampler, batch: dict, pad_to_multiple_of=128, truncate=MAX_SEQ_LENGTH
-# ):
-#     prompts = []
-#     images = []
-#     for img, question, answer in zip(batch["image"], batch["question"], batch["answer"]):
-#         prompt = f"""<start_of_turn>user\n<start_of_image>{question}<end_of_turn>\n<start_of_turn>model\n"""
-#         prompts.append(prompt)
-#         images.append(jnp.array(img.resize((896, 896))))
-#     # TODO: add completion tokens, make sure padding is correct
-#     prompt_tokens = encode_batch(sampler.tokenizer, prompts, add_bos=True)
-#     # array of size (B N H W C), where N=1 - number of images per prompt
-#     images = jnp.stack([jnp.array(img) for img in images])[:, None, ...]
-
-#     out = model(prompt_tokens, images=images)
-
-
-
-    # token_lists = [sampler.tokenizer.encode(text) for text in texts]
-    # max_length = max(len(token_list) for token_list in token_lists)
-    # # align to multiple of certain value to minimize re-compilation for every length
-    # max_length = math.ceil(max_length / pad_to_multiple_of) * pad_to_multiple_of
-    # pad_token_id = sampler.tokenizer.special_tokens.PAD
-    # token_lists = [
-    #     token_list + [pad_token_id] * (max_length - len(token_list))
-    #     for token_list in token_lists
-    # ]
-    # token_lists = [token_list[:truncate] for token_list in token_lists]
-    # tokens = jnp.array(token_lists)
-    # return {"tokens": tokens, "pad_mask": tokens != pad_token_id}
-
-
 def loss_fn(model, tokens: jax.Array, images: jax.Array, completion_mask: jax.Array):
     inputs = tokens[:, :-1]
     labels = tokens[:, 1:]    # same tokens, but shifted by one
-    # logits = model(inputs, attention_mask=mask)
-    # TODO: check that model itself takes PAD tokens into account
-    # when calculating attention mask (i.e. we don't need to pass it here)
+    # note: the model knows about padding via PAD tokens in the input
     logits = model(inputs, images=images).logits
 
     mask = completion_mask[:, 1:]

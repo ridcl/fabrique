@@ -32,7 +32,7 @@ def test_functional():
         rng=rngs(),
     )
     completion = tokenizer.decode(out_tokens[0])
-    target =  "Here's a description of the image:\n\nThe image showcases a vibrant red robin perched on a thin, gray branch. The robin's plumage is a mix of orange, gray, and white, with a striking black eye and a bright orange breast. The background is softly blurred, creating a shallow depth of field and drawing the viewer's attention to the beautiful bird in the foreground.<end_of_turn>"
+    target = "Here's a description of the image:\n\nThe image shows a vibrant red robin perched on a thin, gray branch. The robin has a distinct orange breast and reddish-brown head, contrasting with its gray upper plumage. It has a bright black eye and a small, pointed beak, giving it a cheerful and alert appearance against the blurred, autumnal background of brown and beige tones.<end_of_turn>"
     assert completion == target
 
     # batch sampling from text-only prompts
@@ -70,5 +70,5 @@ def test_sampler_class():
     completion = sampler.sample(
         prompt, images=[image], max_length=512, temperature=1, rngs=rngs
     )
-    target = "Here's a description of the image:\n\nThe image showcases a vibrant red robin perched on a thin, gray branch. The robin's plumage is a mix of orange, gray, and white, with a striking black eye and a bright orange breast. The background is softly blurred, creating a shallow depth of field and drawing the viewer's attention to the beautiful bird in the foreground.<end_of_turn>"
+    target = "Here's a description of the image:\n\nThe image shows a vibrant red robin perched on a thin, gray branch. The robin has a distinct orange breast and reddish-brown head, contrasting with its gray upper plumage. It has a bright black eye and a small, pointed beak, giving it a cheerful and alert appearance against the blurred, autumnal background of brown and beige tones.<end_of_turn>"
     assert completion == target

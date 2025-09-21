@@ -1,4 +1,4 @@
-from fabrique.loading import ConversionRule as R
+from fabrique.loading import LoadRule as R
 
 # fmt: off
 RULES = [
@@ -28,20 +28,20 @@ RULES = [
 
     ## blocks
     # attn
-    R("layer_{n}.attn.attn_vec_einsum.w", "blocks[{n}].attn.attn_vec_einsum.kernel"),
-    R("layer_{n}.attn.qkv_einsum.w", "blocks[{n}].attn.qkv_einsum.kernel"),
-    R("layer_{n}.attn.q_einsum.w", "blocks[{n}].attn.q_einsum.kernel"),
-    R("layer_{n}.attn.kv_einsum.w", "blocks[{n}].attn.kv_einsum.kernel"),
-    R("layer_{n}.attn._query_norm.scale", "blocks[{n}].attn._query_norm.scale"),
-    R("layer_{n}.attn._key_norm.scale", "blocks[{n}].attn._key_norm.scale"),
+    R("layer_{n}.attn.attn_vec_einsum.w", "blocks.{n}.attn.attn_vec_einsum.kernel"),
+    R("layer_{n}.attn.qkv_einsum.w", "blocks.{n}.attn.qkv_einsum.kernel"),
+    R("layer_{n}.attn.q_einsum.w", "blocks.{n}.attn.q_einsum.kernel"),
+    R("layer_{n}.attn.kv_einsum.w", "blocks.{n}.attn.kv_einsum.kernel"),
+    R("layer_{n}.attn._query_norm.scale", "blocks.{n}.attn._query_norm.scale"),
+    R("layer_{n}.attn._key_norm.scale", "blocks.{n}.attn._key_norm.scale"),
     # ffw
-    R("layer_{n}.mlp.gating_einsum", "blocks[{n}].mlp.gating.kernel"),
-    R("layer_{n}.mlp.linear", "blocks[{n}].mlp.linear.kernel"),
+    R("layer_{n}.mlp.gating_einsum", "blocks.{n}.mlp.gating.kernel"),
+    R("layer_{n}.mlp.linear", "blocks.{n}.mlp.linear.kernel"),
     # norms
-    R("layer_{n}.pre_attention_norm.scale", "blocks[{n}].pre_attention_norm.scale"),
-    R("layer_{n}.post_attention_norm.scale", "blocks[{n}].post_attention_norm.scale"),
-    R("layer_{n}.pre_ffw_norm.scale", "blocks[{n}].pre_ffw_norm.scale"),
-    R("layer_{n}.post_ffw_norm.scale", "blocks[{n}].post_ffw_norm.scale"),
+    R("layer_{n}.pre_attention_norm.scale", "blocks.{n}.pre_attention_norm.scale"),
+    R("layer_{n}.post_attention_norm.scale", "blocks.{n}.post_attention_norm.scale"),
+    R("layer_{n}.pre_ffw_norm.scale", "blocks.{n}.pre_ffw_norm.scale"),
+    R("layer_{n}.post_ffw_norm.scale", "blocks.{n}.post_ffw_norm.scale"),
 
     # norms
     R("final_norm.scale", "final_norm.scale"),

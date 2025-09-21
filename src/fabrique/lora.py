@@ -1,8 +1,9 @@
 # adapted from:
 # https://github.com/google-deepmind/gemma/blob/22130bffc1e0fb4255de9758426865cf7e9430a8/gemma/peft/_lora.py
+from typing import Sequence
+
 import jax
 import jax.numpy as jnp
-from typing import Sequence
 from flax import nnx
 from gemma.peft import _einsum_utils
 
@@ -31,7 +32,7 @@ class LoRAEinsumAdapter(nnx.Module):
         shape: Sequence[int],
         *,
         dtype: jnp.dtype = jnp.float32,
-        rngs: nnx.Rngs
+        rngs: nnx.Rngs,
     ):
         self.rank = rank
         self.einsum_str = einsum_str
@@ -58,7 +59,14 @@ class LoRAEinsumAdapter(nnx.Module):
 class LoRAEinsum(nnx.Module):
     """Wrapper around `nn.Einsum` which adds a LoRA adapter."""
 
-    def __init__(self, rank: int, base_module: nnx.Einsum, *, dtype: jnp.dtype | None = None, rngs: nnx.Rngs):
+    def __init__(
+        self,
+        rank: int,
+        base_module: nnx.Einsum,
+        *,
+        dtype: jnp.dtype | None = None,
+        rngs: nnx.Rngs,
+    ):
         self.rank = rank
         self.base_module = base_module
         self.dtype = dtype or self.base_module.kernel.dtype
@@ -67,7 +75,7 @@ class LoRAEinsum(nnx.Module):
             einsum_str=self.base_module.einsum_str,
             shape=self.base_module.kernel_shape,
             dtype=self.dtype,
-            rngs=rngs
+            rngs=rngs,
         )
 
     def __call__(self, inputs: jax.Array) -> jax.Array:

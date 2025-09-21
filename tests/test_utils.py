@@ -1,8 +1,15 @@
 from dataclasses import dataclass
 
+import jax
 import pytest
 
-from fabrique.utils import set_nested, set_nested_attr, update_tree, get_by_path, set_by_path
+from fabrique.utils import (
+    get_by_path,
+    set_by_path,
+    set_nested,
+    set_nested_attr,
+    update_tree,
+)
 
 
 def test_update_tree():
@@ -61,10 +68,12 @@ def test_set_nested_attr():
 
 ## new style paths
 
+
 def test_get_set_by_path():
-    import pytest
-    import jax.numpy as jnp
     from dataclasses import dataclass
+
+    import jax.numpy as jnp
+    import pytest
 
     @dataclass
     class C:
@@ -81,7 +90,7 @@ def test_get_set_by_path():
     zeros = jnp.zeros((3, 4))
     ones = jnp.ones((3, 4))
     twos = 2 * ones
-    another = jnp.ones((4,5))
+    another = jnp.ones((4, 5))
     a = A({"key": B([C(ones)])})
 
     assert get_by_path(a, "bs.key") == a.bs["key"]

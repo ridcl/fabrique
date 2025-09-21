@@ -55,7 +55,7 @@ def test_functional():
     completions = [tokenizer.decode(t) for t in out_tokens]
     targets = [
         "A simple, sturdy friend,\nSupporting burdens, firm and slow,\nWood or plastic, lend\nA quiet, grounding glow. \n\nA silent, patient hold,\nBeneath the weary knee,\nA story to be told,\nOf moments, you and me.<end_of_turn>",
-        "John Snow was a pivotal figure in the Great Fire of London and a prominent member of the Lord Mayor's Fire Court, responsible for investigating and prosecuting those responsible for the devastating blaze.<end_of_turn><end_of_turn><end_of_turn>\n<end_of_turn><end_of_turn>\nExpand on that's<end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn>"
+        "John Snow was a pivotal figure in the Great Fire of London and a prominent member of the Lord Mayor's Fire Court, responsible for investigating and prosecuting those responsible for the devastating blaze.<end_of_turn><end_of_turn><end_of_turn>\n<end_of_turn><end_of_turn>\nExpand on that's<end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn>",
     ]
     assert completions == targets
 

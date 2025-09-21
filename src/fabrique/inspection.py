@@ -12,11 +12,11 @@ def summary_size(obj):
 
 def summary_size_str(obj):
     nbytes = summary_size(obj)
-    if nbytes > (1024 ** 3):
-        divider = 1024 ** 3
+    if nbytes > (1024**3):
+        divider = 1024**3
         suffix = "Gb"
-    elif nbytes > (1024 ** 2):
-        divider = 1024 ** 2
+    elif nbytes > (1024**2):
+        divider = 1024**2
         suffix = "Mb"
     elif nbytes > 1024:
         divider = 1024
@@ -57,6 +57,7 @@ def print_size(params):
             print(f"{indent_str}{name} :: None")
         else:
             print(f"{indent_str}{name} :: {type(obj)} (skipping analysis)")
+
     obj = params
     if isinstance(obj, nnx.Module):
         _, obj = nnx.split(obj)

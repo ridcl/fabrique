@@ -7,15 +7,12 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import bridge
-from gemma import gm
 from gemma.gm.nn import _config, _modules, _transformer
 from gemma.gm.nn._transformer import ModelInfo
 from gemma.gm.utils import _types
 from gemma.gm.vision import _token_utils
 from gemma.multimodal import vision as gemma_vision
 
-from fabrique.loading import ConversionRule as R
-from fabrique.loading import update_module_from_params
 from fabrique.models.gemma.layers import GemmaRMSNorm
 from fabrique.models.gemma.modules import Block, Embedder
 

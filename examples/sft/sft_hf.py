@@ -1,9 +1,7 @@
 import math
 
 import datasets
-import jax
 import jax.numpy as jnp
-import numpy as np
 import optax
 import tensorflow as tf  # for logging
 from flax import nnx

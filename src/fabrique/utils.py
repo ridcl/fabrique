@@ -7,7 +7,6 @@ from flax.core import FrozenDict
 from jax import tree_util
 from multimethod import multimethod
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -72,7 +71,11 @@ def print_var(name: str, x):
     if x is not None:
         jax.debug.print(
             "{}: mean={}, var={}, shape={}, dtype={}",
-            name, x.mean(), x.var(), x.shape, x.dtype
+            name,
+            x.mean(),
+            x.var(),
+            x.shape,
+            x.dtype,
         )
     else:
         jax.debug.print("{} = {}", name, x)
@@ -191,8 +194,8 @@ def check_and_update_fields(args, **kwargs):
     return args
 
 
-
 # new style paths
+
 
 def log_or_raise(msg: str, raising: bool):
     if raising:
@@ -205,19 +208,35 @@ ArrayOrShapeStruct = jax.Array | jax.ShapeDtypeStruct
 
 
 @multimethod
-def check_compatible_values(old_value: ArrayOrShapeStruct, new_value: ArrayOrShapeStruct, location: str = "", raising: bool = False):
+def check_compatible_values(
+    old_value: ArrayOrShapeStruct,
+    new_value: ArrayOrShapeStruct,
+    location: str = "",
+    raising: bool = False,
+):
     loc_str = f" @ {location}" if location else ""
     if old_value.dtype != new_value.dtype:
-        log_or_raise(f"Mismatch on dtype: {old_value.dtype} -> {new_value.dtype}{loc_str}", raising)
+        log_or_raise(
+            f"Mismatch on dtype: {old_value.dtype} -> {new_value.dtype}{loc_str}",
+            raising,
+        )
     if old_value.shape != new_value.shape:
-        log_or_raise(f"Mismatch on shape: {old_value.shape} -> {new_value.shape}{loc_str}", raising)
+        log_or_raise(
+            f"Mismatch on shape: {old_value.shape} -> {new_value.shape}{loc_str}",
+            raising,
+        )
 
 
 @multimethod
-def check_compatible_values(old_value, new_value, location: str = "", raising: bool = False):
+def check_compatible_values(  # noqa: F811
+    old_value, new_value, location: str = "", raising: bool = False
+):
     loc_str = f" @ {location}" if location else ""
-    if type(old_value) != type(new_value):
-        log_or_raise(f"Mismatch on object type: {type(old_value)} -> {type(new_value)}{loc_str}", raising=raising)
+    if type(old_value) is not type(new_value):
+        log_or_raise(
+            f"Mismatch on object type: {type(old_value)} -> {type(new_value)}{loc_str}",
+            raising=raising,
+        )
 
 
 def get_by_path(obj, path: str | list[str]):
@@ -248,19 +267,32 @@ def set_by_path(obj, path: str | list[str], value, raising: bool = False):
         case list():
             idx = int(last_key)
             if idx >= len(parent):
-                log_or_raise(f"Setting value at index {idx}, " +
-                            f"but the receiver list only has length {len(parent)} (path = {path})", raising)
+                log_or_raise(
+                    f"Setting value at index {idx}, "
+                    + f"but the receiver list only has length {len(parent)} (path = {path})",
+                    raising,
+                )
             check_compatible_values(parent[idx], value, location=path, raising=raising)
             parent[idx] = value
         case dict():
             if last_key not in parent:
-                log_or_raise(f"Setting value at key {last_key}, " +
-                             "but the receiver dict doesn't contain it (path = {path})", raising)
-            check_compatible_values(parent[last_key], value, location=path, raising=raising)
+                log_or_raise(
+                    f"Setting value at key {last_key}, "
+                    + "but the receiver dict doesn't contain it (path = {path})",
+                    raising,
+                )
+            check_compatible_values(
+                parent[last_key], value, location=path, raising=raising
+            )
             parent[last_key] = value
         case _:
             if not hasattr(parent, last_key):
-                log_or_raise(f"Setting attribute {last_key}, but object of type {type(parent)} " +
-                             "doesn't have such attribute (path = {path})", raising=raising)
-            check_compatible_values(getattr(parent, last_key), value, location=path, raising=raising)
+                log_or_raise(
+                    f"Setting attribute {last_key}, but object of type {type(parent)} "
+                    + "doesn't have such attribute (path = {path})",
+                    raising=raising,
+                )
+            check_compatible_values(
+                getattr(parent, last_key), value, location=path, raising=raising
+            )
             setattr(parent, last_key, value)

@@ -6,9 +6,9 @@ from gemma import gm
 from gemma.gm.nn import _layers, _modules, _transformer
 from gemma.gm.utils import _dtype_params
 
-from fabrique.loading2 import LoadRule as R
-from fabrique.loading2 import update_module_from_params
-from fabrique.loading2 import RULES
+from fabrique.loading import LoadRule as R
+from fabrique.loading import update_module_from_params
+from fabrique.models.gemma.load_rules import RULES
 from fabrique.models.gemma.modeling import Transformer
 from fabrique.models.gemma.modules import (
     Attention,

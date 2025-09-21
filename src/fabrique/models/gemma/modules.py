@@ -169,12 +169,13 @@ class Attention(nnx.Module):
         self.use_qk_norm = use_qk_norm
 
         einsum = partial(nnx.Einsum, param_dtype=param_dtype, rngs=rngs)
+        init_fn = nnx.initializers.lecun_normal()
 
         self.attn_vec_einsum = einsum(
             "BTNH,NHD->BTD",
             kernel_shape=(self.num_heads, self.head_dim, self.features),
+            kernel_init=nnx.with_partitioning(init_fn, ("model", None, None))
         )
-        init_fn = nnx.initializers.lecun_normal()
         if self.use_qkv_einsum:
             self.qkv_einsum = einsum(
                 "BTD,SNDH->SBTNH",
@@ -367,17 +368,20 @@ class FeedForward(nnx.Module):
         self.transpose_gating_einsum = transpose_gating_einsum
 
         einsum = partial(nnx.Einsum, param_dtype=param_dtype, rngs=rngs)
+        init_fn = nnx.initializers.lecun_normal()
         # Some versions use an alternate parameter ordering that
         # transposes hidden_dim and features.
         if self.transpose_gating_einsum:
             self.gating = einsum(
                 "...F,NHF->...NH",
                 kernel_shape=(2, self.hidden_dim, self.features),
+                kernel_init=nnx.with_partitioning(init_fn, (None, "model", None))
             )
         else:
             self.gating = einsum(
                 "...F,NFH->...NH",
                 kernel_shape=(2, self.features, self.hidden_dim),
+                kernel_init=nnx.with_partitioning(init_fn, (None, "model", None))
             )
         # Use the same scope for backwards compatibility with existing checkpoints
         # created before using `_layers.Einsum` here.
@@ -388,6 +392,7 @@ class FeedForward(nnx.Module):
         self.linear = einsum(
             "...H,HF->...F",
             kernel_shape=(self.hidden_dim, self.features),
+            kernel_init=nnx.with_partitioning(init_fn, ("model", None))
         )
         # nn.share_scope(self, linear)
 

@@ -21,6 +21,6 @@
 
 	"postCreateCommand": "bash .devcontainer/init.sh",
 
-	"runArgs": ["--gpus", "all"]
+	"runArgs": ["--gpus", "all", "--shm-size", "2g"]
 
 }

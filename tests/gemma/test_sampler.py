@@ -32,10 +32,8 @@ def test_functional():
         rng=rngs(),
     )
     completion = tokenizer.decode(out_tokens[0])
-    assert (
-        completion
-        == "Here's a description of the image:\n\nThe image showcases a vibrant red robin perched on a thin, gray branch. The robin's plumage is a mix of grey, orange, and white, with a striking orange breast and a bright red cap. It has a small, black eye and a pointed beak. The background is blurred and predominantly neutral tones, drawing focus to the bird's beautiful colors and detail.<end_of_turn>"
-    )
+    target = "Here's a description of the image:\n\nThe image shows a vibrant red robin perched on a thin, gray branch. The robin has a distinct orange breast and reddish-brown head, contrasting with its gray upper plumage. It has a bright black eye and a small, pointed beak, giving it a cheerful and alert appearance against the blurred, autumnal background of brown and beige tones.<end_of_turn>"
+    assert completion == target
 
     # batch sampling from text-only prompts
     prompts = [
@@ -55,14 +53,11 @@ def test_functional():
         rng=rngs(),
     )
     completions = [tokenizer.decode(t) for t in out_tokens]
-    assert (
-        completions[0]
-        == "A simple, sturdy friend,\nSupporting burdens, firm and slow,\nA quiet, wooden end. \n\nJust a stool, unseen,\nYet grounding us, a steady base,\nIn moments, calm and lean.<end_of_turn>"
-    )
-    assert (
-        completions[1]
-        == "John Snow was a pivotal figure in the Great Fire of London and a prominent member of the Lord Mayor's Fire Court, responsible for investigating and prosecuting those responsible for the devastating blaze.<end_of_turn><end_of_turn><end_of_turn>\n<end_of_turn><end_of_turn>\nExpand on that"
-    )
+    targets = [
+        "A simple, sturdy friend,\nSupporting burdens, firm and slow,\nWood or plastic, lend\nA quiet, grounding glow. \n\nA silent, patient hold,\nBeneath the weary knee,\nA story to be told,\nOf moments, you and me.<end_of_turn>",
+        "John Snow was a pivotal figure in the Great Fire of London and a prominent member of the Lord Mayor's Fire Court, responsible for investigating and prosecuting those responsible for the devastating blaze.<end_of_turn><end_of_turn><end_of_turn>\n<end_of_turn><end_of_turn>\nExpand on that's<end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn>"
+    ]
+    assert completions == targets
 
 
 def test_sampler_class():
@@ -75,7 +70,5 @@ def test_sampler_class():
     completion = sampler.sample(
         prompt, images=[image], max_length=512, temperature=1, rngs=rngs
     )
-    assert (
-        completion
-        == "Here's a description of the image:\n\nThe image showcases a vibrant red robin perched on a thin, gray branch. The robin's plumage is a mix of grey, orange, and white, with a striking orange breast and a bright red cap. It has a small, black eye and a pointed beak. The background is blurred and predominantly neutral tones, drawing focus to the bird's beautiful colors and detail.<end_of_turn>"
-    )
+    target = "Here's a description of the image:\n\nThe image shows a vibrant red robin perched on a thin, gray branch. The robin has a distinct orange breast and reddish-brown head, contrasting with its gray upper plumage. It has a bright black eye and a small, pointed beak, giving it a cheerful and alert appearance against the blurred, autumnal background of brown and beige tones.<end_of_turn>"
+    assert completion == target

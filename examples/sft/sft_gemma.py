@@ -22,7 +22,7 @@ NUM_EPOCHS = 10
 MAX_SEQ_LENGTH = 4096
 
 PROMPT_TEMPLATE = """<start_of_turn>user\n<start_of_image>{}<end_of_turn>\n<start_of_turn>model\n"""
-COMPLETION_TEMPLATE = "{}<end_of_turn>"
+COMPLETION_TEMPLATE = """{{"answer": "{}"}}<end_of_turn>"""
 
 
 summary_writer = tf.summary.create_file_writer("/tmp/tensorboard")
@@ -196,6 +196,26 @@ def train(sampler: Sampler, dataset: Dataset):
                 break
 
 
+
+COLORS = [
+    '\033[95m',
+    '\033[94m',
+    '\033[96m',
+    '\033[92m',
+    '\033[93m',
+    '\033[91m',
+]
+ENDC = '\033[0m'
+
+
+def show_batch(sampler, batch):
+    for i in range(len(batch["question"])):
+        image, question, answer = batch["image"][i], batch["question"][i], batch["answer"][i]
+        out = sampler.sample(PROMPT_TEMPLATE.format(question), images=[image])
+        color = COLORS[i % len(COLORS)]
+        print(color + f"example {i}: " + out + ENDC)
+
+
 def main():
     dataset = load_dataset("flaviagiammarino/vqa-rad", split="train")
     device_arr = np.array(jax.devices())[None, :]
@@ -212,10 +232,12 @@ def main():
             rank=16, base_module=model.blocks[i].attn.kv_einsum, rngs=rngs
         )
 
-
-    batch = next(dataset.iter(batch_size=2))
-    image, question, answer = batch["image"][0], batch["question"][0], batch["answer"][0]
-    out = sampler.sample(PROMPT_TEMPLATE.format(question) + COMPLETION_TEMPLATE.format(answer), images=[image])
-    print(out)
+    batch = next(dataset.iter(batch_size=8))
+    # check output before training
+    show_batch(sampler, batch)
 
     train(sampler, dataset)
+
+    # check output after training
+    # now it should follow the format in the training set
+    show_batch(sampler, batch)

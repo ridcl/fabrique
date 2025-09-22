@@ -9,6 +9,7 @@ from jax.sharding import NamedSharding
 
 from fabrique.utils import get_by_path, set_by_path
 
+
 logger = logging.getLogger("fabrique")
 
 
@@ -103,32 +104,3 @@ def update_module_from_params(
                 pspec = get_by_path(pspecs.raw_mapping, module_path)
                 val = jax.lax.with_sharding_constraint(val, NamedSharding(mesh, pspec))
             set_by_path(module, module_path, val)
-
-
-def main():
-    import jax.numpy as jnp
-    import numpy as np
-    from gemma import gm
-
-    from fabrique.models.gemma.load_rules import RULES
-    from fabrique.models.gemma.modeling import Transformer
-
-    # in_path = "layer_3.attn.q_einsum.w"
-    # in_pattern = "layer_{n}.attn.q_einsum.w"
-    # out_pattern = "blocks.{n}.attn.q_einsum.kernel.value"
-    # out_path = convert_path(in_path, in_pattern, out_pattern)
-
-    config = gm.nn.Gemma3_4B.config
-    ckpt = gm.ckpts.CheckpointPath.GEMMA3_4B_IT
-    params = gm.ckpts.load_params(ckpt)
-    module = nnx.eval_shape(
-        lambda: Transformer(config, param_dtype=jnp.bfloat16, rngs=nnx.Rngs(0))
-    )
-
-    rules = RULES
-    mesh = jax.sharding.Mesh(
-        devices=np.array(jax.devices())[None, :], axis_names=("data", "model")
-    )
-    update_module_from_params(module, rules, params, mesh=mesh)
-
-    # param_keys, val = jax.tree.flatten_with_path(params)[0][8]

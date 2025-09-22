@@ -19,10 +19,10 @@ Alternatively, you can mount the development version of fabrique directly to you
 cd /path/to/your/project
 
 # clone the repository
-git clone https://github.com/dfdx/fabrique
+git clone https://github.com/ridcl/fabrique
 
 # or even add it as a submodule
-# git submodule add git@github.com:dfdx/fabrique.git
+# git submodule add git@github.com:ridlc/fabrique.git
 
 # set up PYTHONPATH to include fabrique as a package
 export PYTHONPATH=.:fabrique

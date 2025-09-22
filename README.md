@@ -41,4 +41,4 @@ TODO
 
 ## Model support
 
-As of now, _fabrique_ focuses on Gemma as its primary LLM/VLM implementation. Previously, _fabrique_ also supported Llama 3, Phi 3/4 and Qwen 2.5. You can find these old implementations in [`legacy/src/fabrique/models`](legacy/src/fabrique/models).
+As of now, _fabrique_ focuses on Gemma as its primary LLM/VLM implementation. Previously, _fabrique_ also supported Llama 3, Phi 3/4 and Qwen 2.5. You can find these old implementations in [legacy/src/fabrique/models](legacy/src/fabrique/models).

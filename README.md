@@ -1,61 +1,44 @@
 # fabrique
 
-Fabrique is a collection of popular LLMs in JAX. It provides clean and
-research-friendly code as well as easy-to-use wrappers for end users.
+_fabrique_ provides foundation components for ML research in LLM/VLM space, including:
 
-Fabrique uses model snapshots from Huggingface Hub and provides familiar high-level API.
+* model implementations
+* fine-tuning routines and examples
+* multi-GPU execution
+* interoperability with broader ecosystem
+
+_fabrique_ is written in JAX/Flax NNX.
 
 ## Installation
 
-You can install the latest released version of fabrique from PYPI:
+You can install the latest released version of _fabrique_ from PYPI:
 
-```
+```bash
 pip install fabrique
 ```
 
-Alternatively, you can mount the development version of fabrique directly to your project and use existing code as reference for your own models:
+Alternatively, you can mount the development version of _fabrique_ directly to your project and use existing code as reference for your own models:
 
-```
+```bash
 cd /path/to/your/project
 
 # clone the repository
-git clone https://github.com/ridcl/fabrique
+mkdir lib
+git clone https://github.com/ridcl/fabrique lib/fabrique
 
 # or even add it as a submodule
-# git submodule add git@github.com:ridlc/fabrique.git
+# git submodule add git@github.com:ridlc/fabrique.git lib/fabrique
 
 # set up PYTHONPATH to include fabrique as a package
-export PYTHONPATH=.:fabrique
+export PYTHONPATH=${PYTHONPATH}:lib/fabrique/src
 ```
 
 
 ## Usage
 
-### High-level API
-
-```python
-from fabrique.models.llm import LLM
+TODO
 
 
-model_id = "microsoft/phi-4"
+## Model support
 
-# note: use keyword arguments that fit your hardware
-llm = LLM.from_pretrained(model_id, max_batch_size=1, max_seq_len=512)
-
-out = llm.generate("""<|user|>\nHow to print a value in Python?<|end|>\n<|assistant|>""")
-print(out)
-```
-
-
-### Working with models directly
-
-Fabrique is built using [Flax NNX](https://flax.readthedocs.io/en/latest/nnx/index.html).
-Citing NNX's home page:
-
-> NNX is a Neural Network library for JAX that focuses on providing the best development experience, so building and experimenting with neural networks is easy and intuitive. It achieves this by embracing Python’s object-oriented model and making it compatible with JAX transforms, resulting in code that is easy to inspect, debug, and analyze.
-
-All Fabrique models can be found in `fabrique/models/<model-name>/modeling.py` files. Feel free to
-copy and modify them. If something in the code is unclear, consider it a bug.
-
-
-The very first model was inspired by the [Meta's Llama 3 repo](https://github.com/meta-llama/llama3).
+As of now, _fabrique_ focuses on Gemma as its primary LLM/VLM implementation. Previously, _fabrique_ also supported Llama 3, Phi 3/4 and Qwen 2.5. You can find these old implementations in [`legacy/src/fabrique/models`](legacy/src/fabrique/models).

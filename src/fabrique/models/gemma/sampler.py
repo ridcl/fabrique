@@ -12,8 +12,10 @@ from gemma.gm.text._prefill import _make_full_attention_mask
 from gemma.gm.utils import _types
 from PIL import Image
 
-from fabrique.loading2 import update_module_from_params
-from fabrique.loading2 import RULES
+from fabrique.loading import update_module_from_params
+from fabrique.models.gemma.load_rules import RULES
+
+# TODO: move load_gemma and these imports to Gemma package
 from fabrique.models.gemma.modeling import Transformer
 
 LayerCache = dict[str, jax.Array]  # gemma.gm.nn._modules.LayerCache
@@ -171,8 +173,12 @@ def sample(
         """Single sampling step."""
 
         model = nnx.merge(static, model_state)
-        if hasattr(model, "vision_encoder") and isinstance(model.vision_encoder, nnx.bridge.ToNNX):
-            model.vision_encoder.rngs = nnx.Rngs(state.rng)  # hack to fix tracing context error
+        if hasattr(model, "vision_encoder") and isinstance(
+            model.vision_encoder, nnx.bridge.ToNNX
+        ):
+            model.vision_encoder.rngs = nnx.Rngs(
+                state.rng
+            )  # hack to fix tracing context error
         out = model(
             tokens=state.last_token[..., None],
             cache=state.cache,

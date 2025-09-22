@@ -3,9 +3,8 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 from flax import nnx
-from flax.nnx import bridge
 from gemma.gm.math import _positional_embeddings
-from gemma.gm.nn import _layers, _modules
+from gemma.gm.nn import _modules
 
 from fabrique.models.gemma.layers import GemmaRMSNorm
 
@@ -174,24 +173,24 @@ class Attention(nnx.Module):
         self.attn_vec_einsum = einsum(
             "BTNH,NHD->BTD",
             kernel_shape=(self.num_heads, self.head_dim, self.features),
-            kernel_init=nnx.with_partitioning(init_fn, ("model", None, None))
+            kernel_init=nnx.with_partitioning(init_fn, ("model", None, None)),
         )
         if self.use_qkv_einsum:
             self.qkv_einsum = einsum(
                 "BTD,SNDH->SBTNH",
                 kernel_shape=(3, self.num_heads, self.features, self.head_dim),
-                kernel_init=nnx.with_partitioning(init_fn, ("model", None, None))
+                kernel_init=nnx.with_partitioning(init_fn, ("model", None, None)),
             )
         else:
             self.q_einsum = einsum(
                 "BTD,NDH->BTNH",
                 kernel_shape=(self.num_heads, self.features, self.head_dim),
-                kernel_init=nnx.with_partitioning(init_fn, ("model", None, None))
+                kernel_init=nnx.with_partitioning(init_fn, ("model", None, None)),
             )
             self.kv_einsum = einsum(
                 "BSD,CKDH->CBSKH",
                 kernel_shape=(2, self.num_kv_heads, self.features, self.head_dim),
-                kernel_init=nnx.with_partitioning(init_fn, ("model", None, None))
+                kernel_init=nnx.with_partitioning(init_fn, ("model", None, None)),
             )
         if self.use_qk_norm:
             self._query_norm = GemmaRMSNorm(
@@ -375,13 +374,13 @@ class FeedForward(nnx.Module):
             self.gating = einsum(
                 "...F,NHF->...NH",
                 kernel_shape=(2, self.hidden_dim, self.features),
-                kernel_init=nnx.with_partitioning(init_fn, (None, "model", None))
+                kernel_init=nnx.with_partitioning(init_fn, (None, "model", None)),
             )
         else:
             self.gating = einsum(
                 "...F,NFH->...NH",
                 kernel_shape=(2, self.features, self.hidden_dim),
-                kernel_init=nnx.with_partitioning(init_fn, (None, "model", None))
+                kernel_init=nnx.with_partitioning(init_fn, (None, "model", None)),
             )
         # Use the same scope for backwards compatibility with existing checkpoints
         # created before using `_layers.Einsum` here.
@@ -392,7 +391,7 @@ class FeedForward(nnx.Module):
         self.linear = einsum(
             "...H,HF->...F",
             kernel_shape=(self.hidden_dim, self.features),
-            kernel_init=nnx.with_partitioning(init_fn, ("model", None))
+            kernel_init=nnx.with_partitioning(init_fn, ("model", None)),
         )
         # nn.share_scope(self, linear)
 
@@ -553,7 +552,7 @@ def example():
     rngs = nnx.Rngs(params=0)
     batch_size = 1
     seq_len = 5
-    cache_len = 5
+    # cache_len = 5
     num_heads: int = 2
     num_kv_heads: int = 2
     features: int = 12

@@ -7,7 +7,7 @@ _fabrique_ provides foundation components for ML research in LLM/VLM space, incl
 * multi-GPU execution
 * interoperability with broader ecosystem
 
-_fabrique_ is written in JAX/Flax NNX.
+_fabrique_ is written in JAX/Flax NNX and follows their [philosophy](PHILOSOPHY.md).
 
 ## Installation
 

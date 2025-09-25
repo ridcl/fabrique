@@ -11,7 +11,7 @@ from datasets import load_dataset, Dataset
 from jinja2 import Environment
 
 from fabrique.models.gemma.load_rules import CHAT_TEMPLATE
-from fabrique.models.gemma.sampler import Sampler
+from fabrique.sampler import Sampler
 from fabrique.lora import LoRAEinsum
 
 
@@ -186,7 +186,7 @@ def main():
     dataset = load_dataset("flaviagiammarino/vqa-rad", split="train")
     device_arr = np.array(jax.devices())[None, :]
     mesh = jax.sharding.Mesh(devices=device_arr, axis_names=("data", "model"))
-    sampler = Sampler.load_gemma("4b", mesh=mesh)
+    sampler = Sampler.load_model("gemma-3-4b-it", mesh=mesh)
     model = sampler.model
 
     rngs = nnx.Rngs(0)

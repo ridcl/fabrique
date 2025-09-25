@@ -2,13 +2,14 @@ import jax.numpy as jnp
 from flax import nnx
 from PIL import Image
 
-from fabrique.models.gemma.sampler import Sampler, encode_batch, load_gemma, sample
+from fabrique.loading import load_model
+from fabrique.sampler import Sampler, encode_batch, sample
 
 
 def test_functional():
     from PIL import Image
 
-    tokenizer, model = load_gemma("4b")
+    tokenizer, model = load_model("gemma-3-4b-it")
 
     # single-item sampling from text and image
     prompts = [
@@ -61,7 +62,7 @@ def test_functional():
 
 
 def test_sampler_class():
-    sampler = Sampler.load_gemma("4b")
+    sampler = Sampler.load_model("gemma-3-4b-it")
     prompt = """<start_of_turn>user\n<start_of_image>Describe the image in a few sentences<end_of_turn>\n<start_of_turn>model\n"""
     image = Image.open("tests/bird.jpg")
 

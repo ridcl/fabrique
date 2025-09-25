@@ -1,5 +1,7 @@
 import logging
 import re
+import pkgutil
+import importlib
 from dataclasses import dataclass
 from typing import Callable
 
@@ -7,6 +9,7 @@ import jax
 from flax import nnx
 from jax.sharding import NamedSharding
 
+from fabrique import models
 from fabrique.utils import get_by_path, set_by_path
 
 
@@ -104,3 +107,33 @@ def update_module_from_params(
                 pspec = get_by_path(pspecs.raw_mapping, module_path)
                 val = jax.lax.with_sharding_constraint(val, NamedSharding(mesh, pspec))
             set_by_path(module, module_path, val)
+
+
+###############################################################################
+#                              Model Loading                                  #
+###############################################################################
+
+
+@dataclass
+class LoadConfig:
+    model_re: str
+    loader: Callable
+
+
+def find_load_configs() -> list[LoadConfig]:
+    load_configs = []
+    for module_info in pkgutil.iter_modules(
+        models.__path__, prefix=models.__name__ + "."
+    ):
+        module = importlib.import_module(module_info.name)
+        if hasattr(module, "LOAD_CONFIG"):
+            cfg = getattr(module, "LOAD_CONFIG")
+            load_configs.append(cfg)
+    return load_configs
+
+
+def load_model(variant: str, *, mesh: jax.sharding.Mesh | None = None):
+    for cfg in find_load_configs():
+        if re.match(cfg.model_re, variant):
+            return cfg.loader(variant, mesh=mesh)
+    raise ValueError(f"Model {variant} is unknown")

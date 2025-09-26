@@ -26,5 +26,6 @@
 
    installation
    quickstart
+   training
    philosophy
 

@@ -265,6 +265,7 @@ def sample(
     return state.predicted_tokens
 
 
+# TODO: move encode_batch to tokenizer_utils, support truncation
 def encode_batch(
     tokenizer: gm.text.Gemma3Tokenizer, prompts: list[str], add_bos=False, add_eos=False
 ):

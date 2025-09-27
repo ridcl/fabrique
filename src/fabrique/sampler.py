@@ -193,7 +193,8 @@ def sample(
             full_attention_mask=state.full_attention_mask,
         )
 
-    model.vision_encoder.rngs = nnx.Rngs(0)  # hack to bypass TraceContextError
+    if model.vision_encoder is not None:
+        model.vision_encoder.rngs = nnx.Rngs(0)  # hack to bypass TraceContextError
 
     bsz = prompt_tokens.shape[0]
     cache_length = max_length
@@ -338,5 +339,8 @@ class Sampler:
             cache_dtype=cache_dtype,
             rng=rngs(),
         )
-        completion = self.tokenizer.decode(out_tokens[0])
+        completion: str = self.tokenizer.decode(out_tokens[0])
+        # tokenizer doesn't remove <end_of_turn> it IT models,
+        # so we do it manually here
+        completion = completion.removesuffix("<end_of_turn>")
         return completion

@@ -1,4 +1,5 @@
 import math
+
 import jax
 import jax.numpy as jnp
 
@@ -23,7 +24,9 @@ def encode_batch_for_prompt_completion(
         - completion_mask: JAX array of shape (batch_size, max_seq_len) with boolean mask
                           (True for completion tokens, False for prompt/padding tokens)
     """
-    assert len(prompts) == len(completions), "Prompts and completions must have same length"
+    assert len(prompts) == len(
+        completions
+    ), "Prompts and completions must have same length"
 
     # batch_size = len(prompts)
     tokenized_sequences = []
@@ -74,4 +77,3 @@ def encode_batch_for_prompt_completion(
     completion_mask = jnp.array(padded_masks, dtype=jnp.bool_)
 
     return tokenized_sequences, completion_mask
-

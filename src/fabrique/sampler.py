@@ -11,8 +11,8 @@ from gemma.gm.data import _functional
 from gemma.gm.text._prefill import _make_full_attention_mask
 from gemma.gm.utils import _types
 from PIL import Image
-from fabrique.loading import load_model
 
+from fabrique.loading import load_model
 
 LayerCache = dict[str, jax.Array]  # gemma.gm.nn._modules.LayerCache
 Cache = dict[str, LayerCache]  # gemma.gm.nn._config.Cache

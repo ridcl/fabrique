@@ -1,4 +1,3 @@
-import math
 from typing import Tuple
 
 import numpy as np
@@ -8,17 +7,17 @@ import optax
 import tensorflow as tf  # for logging
 from flax import nnx
 from datasets import load_dataset, Dataset
-from jinja2 import Environment
 
-from fabrique.models.gemma.load_rules import CHAT_TEMPLATE
 from fabrique.sampler import Sampler
 from fabrique.lora import LoRAEinsum
+from fabrique.tokenizer_utils import encode_batch_for_prompt_completion
+# from fabrique.training import TrainIterator
 
 
 BATCH_SIZE = 2
 IMG_SHAPE = (896, 896)
-TOTAL_STEPS = 1000
-NUM_EPOCHS = 10
+MAX_STEPS = 1000
+MAX_EPOCHS = 10
 MAX_SEQ_LENGTH = 4096
 
 PROMPT_TEMPLATE = """<start_of_turn>user\n<start_of_image>{}<end_of_turn>\n<start_of_turn>model\n"""
@@ -27,80 +26,79 @@ COMPLETION_TEMPLATE = """{{"answer": "{}"}}<end_of_turn>"""
 
 summary_writer = tf.summary.create_file_writer("/tmp/tensorboard")
 
-chat_template = Environment().from_string(CHAT_TEMPLATE)
 
 
-def encode_batch(
-    tokenizer,
-    prompts: list[str],
-    completions: list[str],
-    pad_to_multiple_of: int | None = None,
-    truncate: int | None = None,
-) -> Tuple[jax.Array, jax.Array]:
-    """
-    Encode batched prompts and completions with completion masking.
+# def encode_batch(
+#     tokenizer,
+#     prompts: list[str],
+#     completions: list[str],
+#     pad_to_multiple_of: int | None = None,
+#     truncate: int | None = None,
+# ) -> Tuple[jax.Array, jax.Array]:
+#     """
+#     Encode batched prompts and completions with completion masking.
 
-    Args:
-        prompts: List of prompt strings
-        completions: List of completion strings (same length as prompts)
+#     Args:
+#         prompts: List of prompt strings
+#         completions: List of completion strings (same length as prompts)
 
-    Returns:
-        Tuple of:
-        - tokenized_sequences: JAX array of shape (batch_size, max_seq_len) with token IDs
-        - completion_mask: JAX array of shape (batch_size, max_seq_len) with boolean mask
-                          (True for completion tokens, False for prompt/padding tokens)
-    """
-    assert len(prompts) == len(completions), "Prompts and completions must have same length"
+#     Returns:
+#         Tuple of:
+#         - tokenized_sequences: JAX array of shape (batch_size, max_seq_len) with token IDs
+#         - completion_mask: JAX array of shape (batch_size, max_seq_len) with boolean mask
+#                           (True for completion tokens, False for prompt/padding tokens)
+#     """
+#     assert len(prompts) == len(completions), "Prompts and completions must have same length"
 
-    # batch_size = len(prompts)
-    tokenized_sequences = []
-    completion_masks = []
+#     # batch_size = len(prompts)
+#     tokenized_sequences = []
+#     completion_masks = []
 
-    # Encode each prompt + completion pair
-    for prompt, completion in zip(prompts, completions):
-        # Tokenize prompt and completion separately
-        prompt_tokens = tokenizer.encode(prompt, add_bos=True)
-        completion_tokens = tokenizer.encode(completion, add_eos=True)
+#     # Encode each prompt + completion pair
+#     for prompt, completion in zip(prompts, completions):
+#         # Tokenize prompt and completion separately
+#         prompt_tokens = tokenizer.encode(prompt, add_bos=True)
+#         completion_tokens = tokenizer.encode(completion, add_eos=True)
 
-        # Combine tokens
-        full_sequence = prompt_tokens + completion_tokens
+#         # Combine tokens
+#         full_sequence = prompt_tokens + completion_tokens
 
-        # Create completion mask (False for prompt tokens, True for completion tokens)
-        mask = [False] * len(prompt_tokens) + [True] * len(completion_tokens)
+#         # Create completion mask (False for prompt tokens, True for completion tokens)
+#         mask = [False] * len(prompt_tokens) + [True] * len(completion_tokens)
 
-        tokenized_sequences.append(full_sequence)
-        completion_masks.append(mask)
+#         tokenized_sequences.append(full_sequence)
+#         completion_masks.append(mask)
 
-    # Find maximum sequence length for padding
-    max_len = max(len(seq) for seq in tokenized_sequences)
-    if pad_to_multiple_of:
-        # align to multiple of certain value to minimize re-compilation for every length
-        max_len = math.ceil(max_len / pad_to_multiple_of) * pad_to_multiple_of
+#     # Find maximum sequence length for padding
+#     max_len = max(len(seq) for seq in tokenized_sequences)
+#     if pad_to_multiple_of:
+#         # align to multiple of certain value to minimize re-compilation for every length
+#         max_len = math.ceil(max_len / pad_to_multiple_of) * pad_to_multiple_of
 
-    # Pad sequences and masks
-    padded_sequences = []
-    padded_masks = []
+#     # Pad sequences and masks
+#     padded_sequences = []
+#     padded_masks = []
 
-    for seq, mask in zip(tokenized_sequences, completion_masks):
-        # Pad sequence with PAD tokens
-        padding_length = max_len - len(seq)
-        padded_seq = seq + [tokenizer.special_tokens.PAD] * padding_length
+#     for seq, mask in zip(tokenized_sequences, completion_masks):
+#         # Pad sequence with PAD tokens
+#         padding_length = max_len - len(seq)
+#         padded_seq = seq + [tokenizer.special_tokens.PAD] * padding_length
 
-        # Pad mask with False (padding tokens are not completion tokens)
-        padded_mask = mask + [False] * padding_length
+#         # Pad mask with False (padding tokens are not completion tokens)
+#         padded_mask = mask + [False] * padding_length
 
-        padded_sequences.append(padded_seq)
-        padded_masks.append(padded_mask)
+#         padded_sequences.append(padded_seq)
+#         padded_masks.append(padded_mask)
 
-    if truncate:
-        padded_sequences = [seq[:truncate] for seq in padded_sequences]
-        padded_masks = [seq[:truncate] for seq in padded_sequences]
+#     if truncate:
+#         padded_sequences = [seq[:truncate] for seq in padded_sequences]
+#         padded_masks = [seq[:truncate] for seq in padded_sequences]
 
-    # Convert to JAX arrays
-    tokenized_sequences = jnp.array(padded_sequences, dtype=jnp.int32)
-    completion_mask = jnp.array(padded_masks, dtype=jnp.bool_)
+#     # Convert to JAX arrays
+#     tokenized_sequences = jnp.array(padded_sequences, dtype=jnp.int32)
+#     completion_mask = jnp.array(padded_masks, dtype=jnp.bool_)
 
-    return tokenized_sequences, completion_mask
+#     return tokenized_sequences, completion_mask
 
 
 def loss_fn(model, tokens: jax.Array, images: jax.Array, completion_mask: jax.Array):
@@ -138,16 +136,19 @@ def train(sampler: Sampler, dataset: Dataset):
     metrics = nnx.MultiMetric(
         loss=nnx.metrics.Average("loss"),
     )
+    # ti = TrainIterator(dataset, max_epochs=MAX_EPOCHS, max_steps=MAX_STEPS)
     step = 0
-    for epoch in range(NUM_EPOCHS):
-        if step == TOTAL_STEPS:
+    for epoch in range(MAX_EPOCHS):
+        if step == MAX_STEPS:
             break
         metrics.reset()
         for i, batch in enumerate(dataset.iter(batch_size=BATCH_SIZE)):
             images, questions, answers = batch["image"], batch["question"], batch["answer"]
             prompts = [PROMPT_TEMPLATE.format(q) for q in questions]
             completions = [COMPLETION_TEMPLATE.format(a) for a in answers]
-            tokens, completion_mask = encode_batch(tokenizer, prompts, completions, pad_to_multiple_of=32)
+            tokens, completion_mask = encode_batch_for_prompt_completion(
+                tokenizer, prompts, completions, pad_to_multiple_of=32
+            )
             # array of size (B N H W C), where N=1 - number of images per prompt
             images = jnp.stack([jnp.array(img.resize(IMG_SHAPE)) for img in images])[:, None, ...]
             loss = train_step(model, tokens, images, completion_mask, optimizer, metrics)
@@ -157,7 +158,7 @@ def train(sampler: Sampler, dataset: Dataset):
             with summary_writer.as_default():
                 tf.summary.scalar("loss", loss, metrics.compute()["loss"])
             step += 1
-            if step == TOTAL_STEPS:
+            if step == MAX_STEPS:
                 print("Finished training!")
                 break
 

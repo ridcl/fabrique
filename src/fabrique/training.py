@@ -1,22 +1,19 @@
-import sys
 import itertools
-from typing import Optional, Any
-from collections.abc import Collection, Callable
+import sys
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
+from typing import Any, Optional
+
 from tqdm import tqdm
-
-
 
 #############################################################################
 #                                   Logger                                  #
 #############################################################################
 
-class TrainLogger:
-    def log(self, name: str, value: Any):
-        ...
-    def update(self):
-        ...
 
+class TrainLogger:
+    def log(self, name: str, value: Any): ...
+    def update(self): ...
 
 
 class TqdmLogger(TrainLogger):
@@ -89,7 +86,9 @@ def batched(iterable, n):
 
 class RestartableIterator:
 
-    def __init__(self, base: Callable[[], Any] | Collection, restart_callback: Callable[[], None]):
+    def __init__(
+        self, base: Callable[[], Any] | Collection, restart_callback: Callable[[], None]
+    ):
         self.base = base
         self.restart_callback = restart_callback
         self.state = self._init_state()
@@ -101,8 +100,8 @@ class RestartableIterator:
             it = self.base()
         else:
             raise ValueError(
-                "Base must be either a Collection, or a Callable that returns " +
-                f"a fresh iterator, but it is an instance of {type(self.base)} instead"
+                "Base must be either a Collection, or a Callable that returns "
+                + f"a fresh iterator, but it is an instance of {type(self.base)} instead"
             )
         return it
 
@@ -135,10 +134,8 @@ class TrainIterator:
             self.epoch += 1
             if self.epoch >= self.max_epochs:
                 raise StopIteration()
-        self.ri = RestartableIterator(
-            self.base,
-            restart_callback=stop_on_max_epochs
-        )
+
+        self.ri = RestartableIterator(self.base, restart_callback=stop_on_max_epochs)
         # apply batching if needed
         if self.batch_size:
             self.ri = batched(self.ri, self.batch_size)

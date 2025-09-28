@@ -1,7 +1,7 @@
-import logging
-import re
-import pkgutil
 import importlib
+import logging
+import pkgutil
+import re
 from dataclasses import dataclass
 from typing import Callable
 
@@ -11,7 +11,6 @@ from jax.sharding import NamedSharding
 
 from fabrique import models
 from fabrique.utils import get_by_path, set_by_path
-
 
 logger = logging.getLogger("fabrique")
 

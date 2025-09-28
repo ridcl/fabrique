@@ -171,9 +171,20 @@ Putting it all together, we get::
         ti.log("loss", loss)   # update progress bar suffix
 
 
+.. note::
+   If this is the first time you train a model in JAX/Flax, system behavior
+   might surprise you. Some iterations will be very quick, while others
+   will take much longer. Most often this happens because of JIT compilation:
+   ``jax.jit`` (and, inherently, ``nnx.jit``) re-compiles computation graph
+   for every new shape of input arrays. For example, above we set ``pad_to_multiple_of=128``
+   to align sequence lengths to multiple of 128 and thus reduce number of
+   re-compilations. To persist compiled functions, you can enable `compilation cache`_.
+
+.. _compilation cache: https://docs.jax.dev/en/latest/persistent_compilation_cache.html#setting-cache-directory
+
 Once training is done, we can instantiate a :class:`Sampler` a sample a completion.
 Note that we only trained the model for 1000 steps and don't expect high-quality answers,
-but at least the model now should follow the format (JSON with "answer" field):
+but at least the model now should follow the format (JSON with "answer" field)::
 
     from fabrique.sampler import Sampler
 

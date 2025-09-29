@@ -27,5 +27,9 @@
    installation
    quickstart
    training
+   multimodal
+   sharding
+   lora
+   reference
    philosophy
 

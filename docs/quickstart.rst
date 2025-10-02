@@ -4,7 +4,7 @@ Quick Start
 *fabrique* uses Gemma 3 as its go-to LLM and VLM implementation. To sample from it, you can use a dedicated ``Sampler`` class::
 
     from flax import nnx
-    from fabrique.sampler import Sampler
+    from fabrique.sampling import Sampler
 
     sampler = Sampler.load_model("gemma-3-4b-it")
     prompt = """<start_of_turn>user\nWrite a poem about a stool<end_of_turn>\n<start_of_turn>model\n"""
@@ -44,4 +44,4 @@ Note that to load model and tokenizer, ``Sampler`` simply calls :func:`fabrique.
 .. :func:`fabrique.loading.load_model`
 
 .. .. autofunction:: fabrique.loading.load_model
-.. .. autofunction:: fabrique.sampler.sample_token
+.. .. autofunction:: fabrique.sampling.sample_token

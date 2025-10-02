@@ -1,5 +1,5 @@
 ===========
-Multi-modal
+Multimodality
 ===========
 
 Gemma 3 with 4B, 12B and 27B parameters supports images as its input.
@@ -8,7 +8,7 @@ and ``images`` keyword argument to the call::
 
     import requests
     from PIL import Image
-    from fabrique.sampler import Sampler
+    from fabrique import Sampler
 
     sampler = Sampler.load_model("gemma-3-4b-it")
 

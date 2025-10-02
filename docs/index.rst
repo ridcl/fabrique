@@ -27,7 +27,7 @@
    installation
    quickstart
    training
-   multimodal
+   multimodality
    sharding
    lora
    reference

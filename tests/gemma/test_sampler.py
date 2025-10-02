@@ -3,7 +3,7 @@ from flax import nnx
 from PIL import Image
 
 from fabrique.loading import load_model
-from fabrique.sampler import Sampler, encode_batch, sample
+from fabrique.sampling import Sampler, encode_batch, sample
 
 
 def test_functional():

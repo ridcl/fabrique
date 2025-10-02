@@ -8,7 +8,7 @@ import tensorflow as tf  # for logging
 from flax import nnx
 from datasets import load_dataset, Dataset
 
-from fabrique.sampler import Sampler
+from fabrique.sampling import Sampler
 from fabrique.lora import LoRAEinsum
 from fabrique.tokenizer_utils import encode_batch_for_prompt_completion
 # from fabrique.training import TrainIterator

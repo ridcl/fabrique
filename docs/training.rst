@@ -186,7 +186,7 @@ Once training is done, we can instantiate a :class:`Sampler` a sample a completi
 Note that we only trained the model for 1000 steps and don't expect high-quality answers,
 but at least the model now should follow the format (JSON with "answer" field)::
 
-    from fabrique.sampler import Sampler
+    from fabrique.sampling import Sampler
 
     sampler = Sampler(tokenizer, model)
     completion = sampler.sample(PROMPT_TEMPLATE.format(dataset[0]["query"]))

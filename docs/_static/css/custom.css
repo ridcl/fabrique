@@ -1,0 +1,12 @@
+/*@import url("theme.css");*/
+
+/* For code blocks */
+div.highlight,
+pre {
+    background-color: #f5f2f0 !important;  /* Light gray/lavender */
+}
+
+/* For inline code */
+code.literal {
+    background-color: #f5f2f0 !important;
+}

@@ -2,13 +2,14 @@ import jax.numpy as jnp
 from flax import nnx
 from PIL import Image
 
-from fabrique.models.gemma.sampler import Sampler, encode_batch, load_gemma, sample
+from fabrique.loading import load_model
+from fabrique.sampling import Sampler, encode_batch, sample
 
 
 def test_functional():
     from PIL import Image
 
-    tokenizer, model = load_gemma("4b")
+    tokenizer, model = load_model("gemma-3-4b-it")
 
     # single-item sampling from text and image
     prompts = [
@@ -61,7 +62,7 @@ def test_functional():
 
 
 def test_sampler_class():
-    sampler = Sampler.load_gemma("4b")
+    sampler = Sampler.load_model("gemma-3-4b-it")
     prompt = """<start_of_turn>user\n<start_of_image>Describe the image in a few sentences<end_of_turn>\n<start_of_turn>model\n"""
     image = Image.open("tests/bird.jpg")
 
@@ -70,5 +71,5 @@ def test_sampler_class():
     completion = sampler.sample(
         prompt, images=[image], max_length=512, temperature=1, rngs=rngs
     )
-    target = "Here's a description of the image:\n\nThe image shows a vibrant red robin perched on a thin, gray branch. The robin has a distinct orange breast and reddish-brown head, contrasting with its gray upper plumage. It has a bright black eye and a small, pointed beak, giving it a cheerful and alert appearance against the blurred, autumnal background of brown and beige tones.<end_of_turn>"
+    target = "Here's a description of the image:\n\nThe image shows a vibrant red robin perched on a thin, gray branch. The robin has a distinct orange breast and reddish-brown head, contrasting with its gray upper plumage. It has a bright black eye and a small, pointed beak, giving it a cheerful and alert appearance against the blurred, autumnal background of brown and beige tones."
     assert completion == target

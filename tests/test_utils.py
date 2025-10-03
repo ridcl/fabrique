@@ -3,6 +3,7 @@ import jax
 from fabrique.utils import (
     get_by_path,
     set_by_path,
+    ensure_path
 )
 
 
@@ -50,3 +51,19 @@ def test_get_set_by_path():
     assert a.bs["key"] == B([])
     with pytest.raises(ValueError):
         set_by_path(a, "bs.another_key", B([]), raising=True)
+
+
+def test_ensure_path():
+    obj = {"a": [{"b": 1}]}
+
+    ensure_path(obj, "a.0.b")
+    assert obj == {"a": [{"b": 1}]}
+
+    ensure_path(obj, "a.0.c")
+    assert obj == {"a": [{"b": 1, "c": {}}]}
+
+    ensure_path(obj, "a.5.c.d")
+    assert obj == {'a': [{'b': 1, 'c': {}}, {}, {}, {}, {}, {'c': {'d': {}}}]}
+
+    set_by_path(obj, "a.5.c.d", 4, ignore_leave_type=True)
+    assert obj == {'a': [{'b': 1, 'c': {}}, {}, {}, {}, {}, {'c': {'d': 4}}]}

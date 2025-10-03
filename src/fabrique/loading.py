@@ -1,14 +1,16 @@
+import importlib
 import logging
+import pkgutil
 import re
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Any, Optional
 
 import jax
 from flax import nnx
 from jax.sharding import NamedSharding
 
-from fabrique.utils import get_by_path, set_by_path
-
+from fabrique import models
+from fabrique.utils import get_by_path, set_by_path, keys_to_path, ensure_path
 
 logger = logging.getLogger("fabrique")
 
@@ -84,10 +86,6 @@ def update_module_from_params(
     """
     Update Flax NNX module from a Flax Linen param tree
     """
-
-    def keys_to_path(keys):
-        return ".".join(key.key for key in keys)
-
     state = nnx.state(module)  # the model's state, a pure pytree
     pspecs = nnx.get_partition_spec(state)  # strip out the annotations from state
     for param_keys, val in jax.tree.flatten_with_path(params)[0]:
@@ -104,3 +102,62 @@ def update_module_from_params(
                 pspec = get_by_path(pspecs.raw_mapping, module_path)
                 val = jax.lax.with_sharding_constraint(val, NamedSharding(mesh, pspec))
             set_by_path(module, module_path, val)
+
+
+
+def transform_path(path: str, rules: list[LoadRule], invert: bool = False) -> Optional[str]:
+    for rule in rules:
+        in_pattern, out_pattern = rule.in_pattern, rule.out_pattern
+        if invert:
+            in_pattern, out_pattern = out_pattern, in_pattern
+        # print(f"testing \033[94m{in_pattern}\033[0m -> \033[91m{out_pattern}\033[0m")
+        if m := convert_path(path, in_pattern, out_pattern):
+            return m
+    else:
+        return None
+
+
+def transform_tree(tree: dict[str, Any], rules: list[LoadRule], invert=False) -> dict[str, Any]:
+    out = {}
+    keys_and_vals = jax.tree.flatten_with_path(
+        tree,
+        is_leaf=lambda x: isinstance(x, nnx.Param)
+    )[0]
+    for keys, val in keys_and_vals:
+        path = keys_to_path(keys)
+        out_path = transform_path(path, rules, invert=invert)
+        if out_path is None:
+            logger.warning(f"Input path {path} isn't covered by any rule; ignoring the path")
+            continue
+        ensure_path(out, out_path)
+        set_by_path(out, out_path, val, ignore_leave_type=True)
+    return out
+
+###############################################################################
+#                              Model Loading                                  #
+###############################################################################
+
+
+@dataclass
+class LoadConfig:
+    model_re: str
+    loader: Callable
+
+
+def find_load_configs() -> list[LoadConfig]:
+    load_configs = []
+    for module_info in pkgutil.iter_modules(
+        models.__path__, prefix=models.__name__ + "."
+    ):
+        module = importlib.import_module(module_info.name)
+        if hasattr(module, "LOAD_CONFIG"):
+            cfg = getattr(module, "LOAD_CONFIG")
+            load_configs.append(cfg)
+    return load_configs
+
+
+def load_model(variant: str, *, mesh: jax.sharding.Mesh | None = None):
+    for cfg in find_load_configs():
+        if re.match(cfg.model_re, variant):
+            return cfg.loader(variant, mesh=mesh)
+    raise ValueError(f"Model {variant} is unknown")

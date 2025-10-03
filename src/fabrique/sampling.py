@@ -12,41 +12,10 @@ from gemma.gm.text._prefill import _make_full_attention_mask
 from gemma.gm.utils import _types
 from PIL import Image
 
-from fabrique.loading import update_module_from_params
-from fabrique.models.gemma.load_rules import RULES
-
-# TODO: move load_gemma and these imports to Gemma package
-from fabrique.models.gemma.modeling import Transformer
+from fabrique.loading import load_model
 
 LayerCache = dict[str, jax.Array]  # gemma.gm.nn._modules.LayerCache
 Cache = dict[str, LayerCache]  # gemma.gm.nn._config.Cache
-
-
-def load_gemma(variant: str, *, mesh: jax.sharding.Mesh | None = None):
-    match variant.lower():
-        case "1b":
-            config = gm.nn.Gemma3_1B.config
-            ckpt = gm.ckpts.CheckpointPath.GEMMA3_1B_IT
-        case "4b":
-            config = gm.nn.Gemma3_4B.config
-            ckpt = gm.ckpts.CheckpointPath.GEMMA3_4B_IT
-        case "12b":
-            config = gm.nn.Gemma3_12B.config
-            ckpt = gm.ckpts.CheckpointPath.GEMMA3_12B_IT
-        case "27b":
-            config = gm.nn.Gemma3_27B.config
-            ckpt = gm.ckpts.CheckpointPath.GEMMA3_27B_IT
-        case _:
-            raise ValueError(f"Unknown Gemma variant: {variant}")
-    param_dtype = jnp.bfloat16
-    model = nnx.eval_shape(
-        lambda: Transformer(config, param_dtype=param_dtype, rngs=nnx.Rngs(0))
-    )
-    params = gm.ckpts.load_params(ckpt)
-    update_module_from_params(model, RULES, params, mesh=mesh)
-    model.vision_encoder.rngs = nnx.Rngs(0)  # otherwise rngs will be abstract array
-    tokenizer = gm.text.Gemma3Tokenizer()
-    return tokenizer, model
 
 
 def sample_token(
@@ -224,7 +193,8 @@ def sample(
             full_attention_mask=state.full_attention_mask,
         )
 
-    model.vision_encoder.rngs = nnx.Rngs(0)  # hack to bypass TraceContextError
+    if model.vision_encoder is not None:
+        model.vision_encoder.rngs = nnx.Rngs(0)  # hack to bypass TraceContextError
 
     bsz = prompt_tokens.shape[0]
     cache_length = max_length
@@ -296,6 +266,7 @@ def sample(
     return state.predicted_tokens
 
 
+# TODO: move encode_batch to tokenizer_utils, support truncation
 def encode_batch(
     tokenizer: gm.text.Gemma3Tokenizer, prompts: list[str], add_bos=False, add_eos=False
 ):
@@ -318,12 +289,12 @@ class Sampler:
         self.model = model
 
     @staticmethod
-    def load_gemma(gemma3_variant: str, mesh: jax.sharding.Mesh | None = None):
-        tokenizer, model = load_gemma(gemma3_variant, mesh=mesh)
+    def load_model(variant: str, mesh: jax.sharding.Mesh | None = None):
+        tokenizer, model = load_model(variant, mesh=mesh)
         return Sampler(tokenizer=tokenizer, model=model)
 
     def __repr__(self):
-        return "Sampler[Gemma3]"
+        return "Sampler"
 
     def sample(
         self,
@@ -368,5 +339,8 @@ class Sampler:
             cache_dtype=cache_dtype,
             rng=rngs(),
         )
-        completion = self.tokenizer.decode(out_tokens[0])
+        completion: str = self.tokenizer.decode(out_tokens[0])
+        # tokenizer doesn't remove <end_of_turn> it IT models,
+        # so we do it manually here
+        completion = completion.removesuffix("<end_of_turn>")
         return completion

@@ -1,8 +1,10 @@
 import logging
 from typing import Any
+from collections.abc import Sequence, Mapping
 
 import jax
 from multimethod import multimethod
+# from flax import nnx
 
 logger = logging.getLogger("fabrique")
 
@@ -70,7 +72,7 @@ def get_by_path(obj, path: str | list[str]) -> Any:
 
     Parameters
     ----------
-    obj: dict or list or Python object
+    obj: Mapping or Sequence or Python object
         Object to get value from
     path: str
         Dot-delimited path of the value
@@ -86,9 +88,9 @@ def get_by_path(obj, path: str | list[str]) -> Any:
     this = obj
     for key in keys:
         match this:
-            case list():
+            case Sequence():
                 this = this[int(key)]
-            case dict():
+            case Mapping():
                 if key.isdigit():
                     # int-like key can be present as text or as actual int
                     this = this.get(key) or this[int(key)]
@@ -142,7 +144,7 @@ def set_by_path(
     parent = get_by_path(obj, keys[:-1])
     last_key = keys[-1]
     match parent:
-        case list():
+        case Sequence():
             idx = int(last_key)
             if idx >= len(parent):
                 log_or_raise(
@@ -152,7 +154,7 @@ def set_by_path(
                 )
             ignore_leave_type or check_compatible_values(parent[idx], value, location=path, raising=raising)
             parent[idx] = value
-        case dict():
+        case Mapping():
             if last_key not in parent:
                 log_or_raise(
                     f"Setting value at key {last_key}, "
@@ -189,7 +191,7 @@ def ensure_path(obj: dict, path: str | list[str]):
     this = obj
     for key in keys:
         match this:
-            case list():
+            case Sequence():
                 ikey = int(key)
                 if len(this) > ikey:
                     this = this[ikey]
@@ -197,7 +199,7 @@ def ensure_path(obj: dict, path: str | list[str]):
                     for _ in range(ikey - len(this) + 1):
                         this.append({})  # note: may not be optimal for leaves
                     this = this[ikey]
-            case dict():
+            case Mapping():
                 if key in this or (key.isdigit() and int(key) in this):
                     this = get_by_path(this, key)
                 else:

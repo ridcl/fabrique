@@ -77,7 +77,7 @@ def load_gemma(variant: str, *, mesh: jax.sharding.Mesh | None = None):
     )
     params = gm.ckpts.load_params(ckpt)
     update_module_from_params(model, RULES, params, mesh=mesh)
-    model.vision_encoder.rngs = nnx.Rngs(0)  # otherwise rngs will be abstract array
+    # model.vision_encoder.rngs = nnx.Rngs(0)  # otherwise rngs will be abstract array
     tokenizer = gm.text.Gemma3Tokenizer()
     return tokenizer, model
 

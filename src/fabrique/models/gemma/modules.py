@@ -474,11 +474,12 @@ class Block(nnx.Module):
             rngs=rngs,
         )
 
-        self.post_attention_norm = None
         if self.use_post_attn_norm:
             self.post_attention_norm = GemmaRMSNorm(
                 embed_dim, param_dtype=param_dtype, rngs=rngs
             )
+        else:
+            self.post_attention_norm = None
 
         self.pre_ffw_norm = GemmaRMSNorm(embed_dim, param_dtype=param_dtype, rngs=rngs)
 
@@ -490,11 +491,12 @@ class Block(nnx.Module):
             rngs=rngs,
         )
 
-        self.post_ffw_norm = None
         if self.use_post_ffw_norm:
             self.post_ffw_norm = GemmaRMSNorm(
                 embed_dim, param_dtype=param_dtype, rngs=rngs
             )
+        else:
+            self.post_ffw_norm = None
 
     def __call__(
         self,

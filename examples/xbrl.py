@@ -1,5 +1,4 @@
 import os
-from multimethod import multimethod
 import pandas as pd
 import numpy as np
 import jax
@@ -10,15 +9,15 @@ from flax import nnx
 from PIL import Image
 from datasets import Dataset
 
+from fabrique import lora
 from fabrique.sampling import Sampler
-from fabrique.lora import LoRAEinsum
 from fabrique.tokenizer_utils import encode_batch_for_prompt_completion
 # from fabrique.training import TrainIterator
 
 
-# ===================
+# =====================
 # Dataset preparation
-# ===================
+# =====================
 
 
 def get_top_concepts(df, n):
@@ -50,31 +49,20 @@ def create_dataset():
     return Dataset.from_pandas(dataset)
 
 
-# ========
+# ===========
 # Training
-# ========
+# ===========
+
 
 BATCH_SIZE = 2
 IMG_SHAPE = (896, 896)
-MAX_STEPS = 100# 00
+MAX_STEPS = 10000
 MAX_EPOCHS = 10
 MAX_SEQ_LENGTH = 4096
-
-COLORS = [
-    '\033[95m',
-    '\033[94m',
-    '\033[96m',
-    '\033[92m',
-    '\033[93m',
-    '\033[91m',
-]
-ENDC = '\033[0m'
-
 
 
 PROMPT_TEMPLATE = """<start_of_turn>user\n<start_of_image>Extract values of the following IFRS concept: {}<end_of_turn>\n<start_of_turn>model\n"""
 COMPLETION_TEMPLATE = """{}<end_of_turn>"""
-
 
 
 def loss_fn(model, tokens: jax.Array, images: jax.Array, completion_mask: jax.Array):
@@ -90,10 +78,7 @@ def loss_fn(model, tokens: jax.Array, images: jax.Array, completion_mask: jax.Ar
 
 
 
-trainable = nnx.All(
-    nnx.Param,
-    nnx.Any(nnx.PathContains("lora_a"), nnx.PathContains("lora_b"))
-)
+trainable = lora.ALL_LORA_PARAMS
 
 
 @nnx.jit
@@ -137,6 +122,23 @@ def train(sampler: Sampler, dataset: list[dict]):
                 break
 
 
+
+# ===============
+# Visualization
+# ===============
+
+COLORS = [
+    '\033[95m',
+    '\033[94m',
+    '\033[96m',
+    '\033[92m',
+    '\033[93m',
+    '\033[91m',
+]
+ENDC = '\033[0m'
+
+
+
 def show_batch(sampler, batch):
     for i in range(len(batch["screenshot"])):
         image_path, question, answer = batch["screenshot"][i], batch["concept"][i], batch["content"][i]
@@ -146,71 +148,19 @@ def show_batch(sampler, batch):
         print(f"{color}example {i}: expected = {answer}; actual = {out}{ENDC}")
 
 
+# ===========
+# Main
+# ===========
 
 
-def load_sampler_and_update_lora():
+def main():
+    dataset = create_dataset()
     device_arr = np.array(jax.devices())[None, :]
     mesh = jax.sharding.Mesh(devices=device_arr, axis_names=("data", "model"))
     sampler = Sampler.load_model("gemma-3-4b-it", mesh=mesh)
     model = sampler.model
 
-    apply_lora(model, rank=64, rngs=nnx.Rngs(0))
-    # for i in range(len(model.blocks)):
-    #     model.blocks[i].attn.q_einsum = LoRAEinsum(
-    #         rank=lora_rank, base_module=model.blocks[i].attn.q_einsum, rngs=rngs
-    #     )
-    #     model.blocks[i].attn.kv_einsum = LoRAEinsum(
-    #         rank=lora_rank, base_module=model.blocks[i].attn.kv_einsum, rngs=rngs
-    #     )
-    return sampler
-
-
-
-from flax.nnx.filterlib import Filter, OfType, Any as AnyOf
-
-
-@multimethod
-def wrap_in_lora(base_module: nnx.Einsum, rank: int, *, rngs: nnx.Rngs):
-    return LoRAEinsum(rank=rank, base_module=base_module, rngs=rngs)
-
-# TODO: add methods for other LoRA layers
-
-
-LORA_COMPATIBLE = AnyOf(OfType(nnx.Einsum))
-LORA_MODULE = AnyOf(OfType(LoRAEinsum))
-
-
-def apply_lora(root: nnx.Module, rank: int, filter: Filter = LORA_COMPATIBLE, *, rngs: nnx.Rngs):
-    matching = []  # list of (parent_module, lora_compatible_attr_name)
-    for path, module in root.iter_modules():
-        for attr_name, child in module.iter_children():
-            # if child passes filter and is not LoRA module yet
-            if filter(path, child) and not LORA_MODULE(path, child):
-                matching.append((module, attr_name))
-    for module, attr_name in matching:
-        base_module = getattr(module, attr_name)
-        lora_module = wrap_in_lora(base_module, rank, rngs=rngs)
-        setattr(module, attr_name, lora_module)
-
-
-def merge_lora(root: nnx.Module):
-    raise NotImplementedError("Merging LoRA parameters is not implemented yet")
-    for path, module in root.iter_modules():
-        for attr_name, child in module.iter_children():
-            # if child passes filter and is not LoRA module yet
-            if LORA_MODULE(path, child):
-                base_module, adapter = child.base_module, child.adapter
-                # TODO: this doesn't work for Einsum. Instead, we
-                # need smth like (assuming lora_einsum_str = 'BTD,Dr,rNH->BTNH')
-                # adapter_kernel = jnp.einsum("Dr,rNH->NDH")
-                # base_module.kernel += adapter.lora_a @ adapter.lora_b
-                setattr(module, attr_name, base_module)
-
-
-
-def main():
-    dataset = create_dataset()
-    sampler = load_sampler_and_update_lora()
+    lora.apply(model, rank=64, rngs=nnx.Rngs(0))
 
     batch = next(dataset.iter(batch_size=8))
     # check output before training

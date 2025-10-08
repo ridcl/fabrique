@@ -28,7 +28,9 @@ GEMMA_MODEL_MAP = {
 
 
 def load_gemma_with_sharding(variant: str, *, mesh: jax.sharding.Mesh | None = None):
-    raise AssertionError("This implementation is currently broken, use `load_gemma` instead")
+    raise AssertionError(
+        "This implementation is currently broken, use `load_gemma` instead"
+    )
     if variant not in GEMMA_MODEL_MAP:
         available_variants_str = "\n".join(f" - {v}" for v in GEMMA_MODEL_MAP.keys())
         raise ValueError(
@@ -47,11 +49,10 @@ def load_gemma_with_sharding(variant: str, *, mesh: jax.sharding.Mesh | None = N
         sharding_in_ckpt_layout = jax.tree.map(
             lambda p: NamedSharding(mesh, p.value),
             pspecs_in_ckpt_layout,
-            is_leaf=lambda p: isinstance(p, nnx.Param)
+            is_leaf=lambda p: isinstance(p, nnx.Param),
         )
         params_in_ckpt_layout = gm.ckpts.load_params(
-            ckpt_path,
-            sharding=_CheckpointTree(tree=sharding_in_ckpt_layout)
+            ckpt_path, sharding=_CheckpointTree(tree=sharding_in_ckpt_layout)
         )
     else:
         params_in_ckpt_layout = gm.ckpts.load_params(ckpt_path)
@@ -69,7 +70,9 @@ def load_gemma_with_sharding(variant: str, *, mesh: jax.sharding.Mesh | None = N
 def load_gemma(variant: str, *, mesh: jax.sharding.Mesh | None = None):
     if variant not in GEMMA_MODEL_MAP:
         available_variants_str = "\n".join(f" - {v}" for v in GEMMA_MODEL_MAP.keys())
-        raise ValueError(f"Model {variant} is not available. Available Gemma models are:\n{available_variants_str}")
+        raise ValueError(
+            f"Model {variant} is not available. Available Gemma models are:\n{available_variants_str}"
+        )
     config, ckpt = GEMMA_MODEL_MAP[variant]
     param_dtype = jnp.bfloat16
     model = nnx.eval_shape(

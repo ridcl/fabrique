@@ -1,15 +1,16 @@
 import os
 import pandas as pd
-import numpy as np
 import jax
 import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
+from jax.sharding import NamedSharding, PartitionSpec as P
 from flax import nnx
 from PIL import Image
 from datasets import Dataset
 
 from fabrique import lora
+from fabrique.models.gemma.modeling import Transformer
 from fabrique.sampling import Sampler
 from fabrique.tokenizer_utils import encode_batch_for_prompt_completion
 # from fabrique.training import TrainIterator
@@ -46,7 +47,7 @@ def create_dataset():
     dataset = gb.agg(lambda x: list(set(x))).reset_index()
 
     assert dataset.shape[0] > 0
-    return Dataset.from_pandas(dataset)
+    return Dataset.from_pandas(dataset).train_test_split(test_size=0.1)
 
 
 # ===========
@@ -123,6 +124,30 @@ def train(sampler: Sampler, dataset: list[dict]):
 
 
 
+# ==============
+# Save/Load
+# ==============
+
+# TODO: move to lora module, adding arg filter = lora.ALL_LORA_PARAMS
+def save_lora(model, ckpt_path: str):
+    ckpt_path = os.path.abspath(ckpt_path)
+    checkpointer = ocp.StandardCheckpointer()
+    _graphdef, lora_state, _other_state = nnx.split(model, trainable, ...)
+    checkpointer.save(ckpt_path, lora_state)
+
+
+def load_lora(model, ckpt_path: str) -> Transformer:
+    ckpt_path = os.path.abspath(ckpt_path)
+    checkpointer = ocp.StandardCheckpointer()
+    graphdef, lora_state, other_state = nnx.split(model, trainable, ...)
+    loaded_state = checkpointer.restore(
+        ckpt_path,
+        lora_state
+    )
+    model = nnx.merge(graphdef, loaded_state, other_state)
+    return model
+
+
 # ===============
 # Visualization
 # ===============
@@ -153,42 +178,34 @@ def show_batch(sampler, batch):
 # ===========
 
 
-def main():
+def main(training=False, ckpt_path: str = "output/vlm-xbrl-lora-1517.ckpt"):
+    if training and os.path.exists(ckpt_path):
+        raise ValueError(
+            f"You asked to train, but the checkpoint path {ckpt_path} "
+            "already exists. If you meant to sample pretrained model, use train=False. " +
+            "Otherwise, specify a different checkpoint path"
+        )
+
     dataset = create_dataset()
-    device_arr = np.array(jax.devices())[None, :]
-    mesh = jax.sharding.Mesh(devices=device_arr, axis_names=("data", "model"))
+    trainset, testset = dataset["train"], dataset["test"]
+
+    mesh = jax.make_mesh((1, len(jax.devices())), ("data", "model"))
     sampler = Sampler.load_model("gemma-3-4b-it", mesh=mesh)
     model = sampler.model
 
-    lora.apply(model, rank=64, rngs=nnx.Rngs(0))
+    lora_sharding = NamedSharding(mesh, P())
+    lora.apply(model, rank=64, sharding=lora_sharding, rngs=nnx.Rngs(0))
 
-    batch = next(dataset.iter(batch_size=8))
-    # check output before training
-    show_batch(sampler, batch)
+    if training:
+        # check output before training
+        batch = next(trainset.iter(batch_size=8))
+        show_batch(sampler, batch)
 
-    train(sampler, dataset)
+        training(sampler, trainset)
+        save_lora(sampler.model, ckpt_path)
+    else:
+        sampler.model = load_lora(sampler.model, ckpt_path)
 
     # check output after training
     # now it should follow the format in the training set
-    show_batch(sampler, batch)
-
-    # checkpoints
-    # ckpt_path = os.path.abspath("output/vlm-xbrl.ckpt")  # Oct 4, 16:30
-    ckpt_path = os.path.abspath("output/vlm-xbrl-lora.ckpt")
-    checkpointer = ocp.StandardCheckpointer()
-
-    # save
-    graphdef, lora_state, other_state = nnx.split(model, trainable, ...)
-    checkpointer.save(ckpt_path, lora_state)
-
-    # load
-    graphdef, lora_state, other_state = nnx.split(sampler.model, trainable, ...)
-    # abstract_state = jax.tree_util.tree_map(
-    #     ocp.utils.to_shape_dtype_struct, state
-    # )
-    loaded_state = checkpointer.restore(
-        ckpt_path,
-        lora_state
-    )
-    model = nnx.merge(graphdef, loaded_state, other_state)
-    sampler.model = model
+    show_batch(sampler, next(testset.iter(8)))

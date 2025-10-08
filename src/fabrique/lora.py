@@ -1,7 +1,6 @@
 # adapted from:
 # https://github.com/google-deepmind/gemma/blob/22130bffc1e0fb4255de9758426865cf7e9430a8/gemma/peft/_lora.py
-from typing import Sequence
-
+from typing import Sequence, Optional
 
 import jax
 import jax.numpy as jnp
@@ -40,6 +39,7 @@ class LoRAEinsumAdapter(nnx.Module):
         shape: Sequence[int],
         *,
         dtype: jnp.dtype = jnp.float32,
+        sharding: jax.sharding.Sharding | None = None,
         rngs: nnx.Rngs,
     ):
         self.rank = rank
@@ -56,9 +56,14 @@ class LoRAEinsumAdapter(nnx.Module):
 
         self.lora_einsum_str = lora_einsum_str
         a_init = nnx.initializers.kaiming_uniform()
-        self.lora_a = nnx.Param(a_init(key=rngs.params(), shape=a_shape, dtype=dtype))
+        a_value = a_init(key=rngs.params(), shape=a_shape, dtype=dtype)
         b_init = nnx.initializers.zeros_init()
-        self.lora_b = nnx.Param(b_init(key=rngs.params(), shape=b_shape, dtype=dtype))
+        b_value = b_init(key=rngs.params(), shape=b_shape, dtype=dtype)
+        if sharding:
+            a_value = jax.device_put(a_value, sharding)
+            b_value = jax.device_put(b_value, sharding)
+        self.lora_a = nnx.Param(a_value)
+        self.lora_b = nnx.Param(b_value)
 
     def __call__(self, inputs: jax.Array) -> jax.Array:
         return jnp.einsum(self.lora_einsum_str, inputs, self.lora_a, self.lora_b)
@@ -73,6 +78,7 @@ class LoRAEinsum(nnx.Module):
         base_module: nnx.Einsum,
         *,
         dtype: jnp.dtype | None = None,
+        sharding: jax.sharding.Sharding | None = None,
         rngs: nnx.Rngs,
     ):
         self.rank = rank
@@ -83,12 +89,12 @@ class LoRAEinsum(nnx.Module):
             einsum_str=self.base_module.einsum_str,
             shape=self.base_module.kernel_shape,
             dtype=self.dtype,
+            sharding=sharding,
             rngs=rngs,
         )
 
     def __call__(self, inputs: jax.Array) -> jax.Array:
         return self.base_module(inputs) + self.adapter(inputs)
-
 
 
 # ==================
@@ -97,13 +103,15 @@ class LoRAEinsum(nnx.Module):
 
 
 @multimethod
-def _wrap_compatible_module(base_module: nnx.Einsum, rank: int, *, rngs: nnx.Rngs):
-    return LoRAEinsum(rank=rank, base_module=base_module, rngs=rngs)
+def _wrap_compatible_module(base_module: nnx.Einsum, rank: int, *, sharding: Optional[jax.sharding.Sharding] = None, rngs: nnx.Rngs):
+    return LoRAEinsum(rank=rank, base_module=base_module, sharding=sharding, rngs=rngs)
+
 
 # TODO: add methods for other LoRA layers
 
+
 @multimethod
-def _wrap_compatible_module(base_module, rank: int, *, rngs: nnx.Rngs):
+def _wrap_compatible_module(base_module, rank: int, *, sharding: Optional[jax.sharding.Sharding] = None, rngs: nnx.Rngs):
     raise ValueError(
         f"Module of type {base_module} doesn't have a compatible LoRA adapter"
     )
@@ -113,12 +121,18 @@ def _wrap_compatible_module(base_module, rank: int, *, rngs: nnx.Rngs):
 LORA_COMPATIBLE_MODULE = AnyOf(OfType(nnx.Einsum))
 LORA_MODULE = AnyOf(OfType(LoRAEinsum))
 ALL_LORA_PARAMS = nnx.All(
-    nnx.Param,
-    nnx.Any(nnx.PathContains("lora_a"), nnx.PathContains("lora_b"))
+    nnx.Param, nnx.Any(nnx.PathContains("lora_a"), nnx.PathContains("lora_b"))
 )
 
 
-def apply(root: nnx.Module, rank: int, filter: Filter = LORA_COMPATIBLE_MODULE, *, rngs: nnx.Rngs):
+def apply(
+    root: nnx.Module,
+    rank: int,
+    filter: Filter = LORA_COMPATIBLE_MODULE,
+    *,
+    sharding: jax.sharding.Sharding | None = None,
+    rngs: nnx.Rngs,
+):
     matching = []  # list of (parent_module, lora_compatible_attr_name)
     for path, module in root.iter_modules():
         for attr_name, child in module.iter_children():
@@ -127,7 +141,7 @@ def apply(root: nnx.Module, rank: int, filter: Filter = LORA_COMPATIBLE_MODULE, 
                 matching.append((module, attr_name))
     for module, attr_name in matching:
         base_module = getattr(module, attr_name)
-        lora_module = _wrap_compatible_module(base_module, rank, rngs=rngs)
+        lora_module = _wrap_compatible_module(base_module, rank, sharding=sharding, rngs=rngs)
         setattr(module, attr_name, lora_module)
 
 
@@ -143,4 +157,3 @@ def merge(root: nnx.Module):
                 # adapter_kernel = jnp.einsum("Dr,rNH->NDH")
                 # base_module.kernel += adapter.lora_a @ adapter.lora_b
                 setattr(module, attr_name, base_module)
-

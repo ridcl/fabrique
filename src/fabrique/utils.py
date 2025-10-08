@@ -4,6 +4,7 @@ from collections.abc import Sequence, Mapping
 
 import jax
 from multimethod import multimethod
+
 # from flax import nnx
 
 logger = logging.getLogger("fabrique")
@@ -102,11 +103,11 @@ def get_by_path(obj, path: str | list[str]) -> Any:
 
 
 def set_by_path(
-        obj,
-        path: str | list[str],
-        value,
-        raising: bool = False,
-        ignore_leave_type: bool = False
+    obj,
+    path: str | list[str],
+    value,
+    raising: bool = False,
+    ignore_leave_type: bool = False,
 ):
     """
     Given a nested object, set value at the given path.
@@ -152,7 +153,9 @@ def set_by_path(
                     + f"but the receiver list only has length {len(parent)} (path = {path})",
                     raising,
                 )
-            ignore_leave_type or check_compatible_values(parent[idx], value, location=path, raising=raising)
+            ignore_leave_type or check_compatible_values(
+                parent[idx], value, location=path, raising=raising
+            )
             parent[idx] = value
         case Mapping():
             if last_key not in parent:
@@ -216,8 +219,8 @@ def ensure_path(obj: dict, path: str | list[str]):
 def keys_to_path(keys):
     key_names = []
     for key in keys:
-        if hasattr(key, "key"):      # DictKey
+        if hasattr(key, "key"):  # DictKey
             key_names.append(str(key.key))
-        elif hasattr(key, "name"):   # GetAttrKey
+        elif hasattr(key, "name"):  # GetAttrKey
             key_names.append(key.name)
     return ".".join(key_names)

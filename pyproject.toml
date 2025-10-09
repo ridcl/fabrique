@@ -5,7 +5,7 @@ description = "Foundation for modern ML research"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "flax>=0.11.0",
+    "flax==0.11.0",   # fix to 0.11.0, because 0.12.x is not compatible yet
     "gemma>=3.1.0",
     "huggingface-hub>=0.33.4",
     "jinja2>=3.1.6",

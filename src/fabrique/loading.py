@@ -104,8 +104,9 @@ def update_module_from_params(
             set_by_path(module, module_path, val)
 
 
-
-def transform_path(path: str, rules: list[LoadRule], invert: bool = False) -> Optional[str]:
+def transform_path(
+    path: str, rules: list[LoadRule], invert: bool = False
+) -> Optional[str]:
     for rule in rules:
         in_pattern, out_pattern = rule.in_pattern, rule.out_pattern
         if invert:
@@ -117,21 +118,25 @@ def transform_path(path: str, rules: list[LoadRule], invert: bool = False) -> Op
         return None
 
 
-def transform_tree(tree: dict[str, Any], rules: list[LoadRule], invert=False) -> dict[str, Any]:
+def transform_tree(
+    tree: dict[str, Any], rules: list[LoadRule], invert=False
+) -> dict[str, Any]:
     out = {}
     keys_and_vals = jax.tree.flatten_with_path(
-        tree,
-        is_leaf=lambda x: isinstance(x, nnx.Param)
+        tree, is_leaf=lambda x: isinstance(x, nnx.Param)
     )[0]
     for keys, val in keys_and_vals:
         path = keys_to_path(keys)
         out_path = transform_path(path, rules, invert=invert)
         if out_path is None:
-            logger.warning(f"Input path {path} isn't covered by any rule; ignoring the path")
+            logger.warning(
+                f"Input path {path} isn't covered by any rule; ignoring the path"
+            )
             continue
         ensure_path(out, out_path)
         set_by_path(out, out_path, val, ignore_leave_type=True)
     return out
+
 
 ###############################################################################
 #                              Model Loading                                  #

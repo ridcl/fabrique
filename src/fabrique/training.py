@@ -1,5 +1,6 @@
 import itertools
 import sys
+from typing import Sized
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -94,7 +95,7 @@ class RestartableIterator:
         self.state = self._init_state()
 
     def _init_state(self):
-        if isinstance(self.base, Collection) or hasattr(self.base, "__len__"):
+        if isinstance(self.base, Sized):
             it = iter(self.base)
         elif isinstance(self.base, Callable):
             it = self.base()
@@ -122,7 +123,7 @@ class RestartableIterator:
 
 @dataclass
 class TrainIterator:
-    base: Callable[[], Any] | Collection
+    base: Callable[[], Any] | Sized
     max_epochs: int = 1
     max_steps: Optional[int] = None
     batch_size: Optional[int] = None

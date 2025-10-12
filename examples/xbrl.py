@@ -164,7 +164,7 @@ ENDC = '\033[0m'
 
 
 
-def show_batch(sampler, batch):
+def show_batch(sampler: Sampler, batch):
     for i in range(len(batch["screenshot"])):
         image_path, question, answer = batch["screenshot"][i], batch["concept"][i], batch["content"][i]
         image = Image.open(image_path)
@@ -178,7 +178,13 @@ def show_batch(sampler, batch):
 # ===========
 
 
-def main(training=False, ckpt_path: str = "output/vlm-xbrl-lora-1517.ckpt"):
+def main(training=False, ckpt_path: str = "output/vlm-xbrl-lora.ckpt"):
+    jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
+    jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+    jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+    jax.config.update("jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir")
+    jax.config.update("jax_explain_cache_misses", True)
+
     if training and os.path.exists(ckpt_path):
         raise ValueError(
             f"You asked to train, but the checkpoint path {ckpt_path} "

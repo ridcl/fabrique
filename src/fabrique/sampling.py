@@ -4,18 +4,23 @@ import einops
 import jax
 import jax.lax as lax
 import jax.numpy as jnp
-import numpy as np
 from flax import nnx, struct
-from gemma import gm
 from gemma.gm.data import _functional
 from gemma.gm.text._prefill import _make_full_attention_mask
 from gemma.gm.utils import _types
 from PIL import Image
 
 from fabrique.loading import load_model
+from fabrique.tokenizer_utils import encode_batch
 
 LayerCache = dict[str, jax.Array]  # gemma.gm.nn._modules.LayerCache
 Cache = dict[str, LayerCache]  # gemma.gm.nn._config.Cache
+
+
+jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
+jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+jax.config.update("jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir")
 
 
 def sample_token(
@@ -226,14 +231,6 @@ def sample(
         return_last_only=True,
     )
 
-    used_cache_length = input.last_token_pos.max()
-    end_index = used_cache_length
-    cache = out.cache
-    for layer_data in cache.values():
-        layer_data["end_index"] = jnp.full_like(
-            layer_data["end_index"], fill_value=end_index
-        )
-
     # We follow logic and notation of the original sampler implementation in Gemma,
     # but in our context they require some clarification. `full_attention_mask`
     # below is actually a padding mask (shape B x L) that is combined with
@@ -256,30 +253,15 @@ def sample(
         last_token=input.last_token,
         last_token_pos=input.last_token_pos,
         predicted_tokens=jnp.zeros((bsz, max_length), dtype=jnp.int32),
-        cache=cache,
+        cache=out.cache,
         rng=rng,
         full_attention_mask=full_attention_mask,
-        init_cache_length=jnp.asarray(used_cache_length),
+        init_cache_length=out.cache["layer_0"]["end_index"][0], #jnp.asarray(init_cache_length),
     )
 
     state = jax.lax.while_loop(sample_cond_fn, sample_body_fn, state)
     return state.predicted_tokens
 
-
-# TODO: move encode_batch to tokenizer_utils, support truncation
-def encode_batch(
-    tokenizer: gm.text.Gemma3Tokenizer, prompts: list[str], add_bos=False, add_eos=False
-):
-    bsz = len(prompts)
-    token_lists = [
-        tokenizer.encode(prompt, add_bos=add_bos, add_eos=add_eos) for prompt in prompts
-    ]
-    max_prompt_length = max(len(lst) for lst in token_lists)
-    tokens = np.full((bsz, max_prompt_length), fill_value=tokenizer.special_tokens.PAD)
-    for i in range(bsz):
-        length = len(token_lists[i])
-        tokens[i][:length] = token_lists[i]
-    return jnp.array(tokens)
 
 
 class Sampler:
@@ -300,18 +282,17 @@ class Sampler:
         self,
         prompt: str,
         images: jax.Array | Image.Image | list[Image.Image] | None = None,
-        add_bos: bool = True,
-        add_eos: bool = False,
         max_length: int = 4096,
         temperature: float = 1.0,
         top_p: float = 1.0,
         top_k: int = 50,
+        pad_to_multiple_of: int = 128,
         cache_dtype: jnp.dtype = jnp.bfloat16,
         rngs: nnx.Rngs = nnx.Rngs(0),
     ):
-        prompt_tokens = jnp.array(
-            self.tokenizer.encode(prompt, add_bos=add_bos, add_eos=add_eos)
-        )[None, :]
+        prompt_tokens = encode_batch(
+            self.tokenizer, [prompt], pad_to_multiple_of=pad_to_multiple_of
+        )
         if isinstance(images, Image.Image):
             images = [images]
         if isinstance(images, list):
@@ -340,7 +321,7 @@ class Sampler:
             rng=rngs(),
         )
         completion: str = self.tokenizer.decode(out_tokens[0])
-        # tokenizer doesn't remove <end_of_turn> it IT models,
+        # tokenizer doesn't remove <end_of_turn> in instruction-tuned models,
         # so we do it manually here
         completion = completion.removesuffix("<end_of_turn>")
         return completion

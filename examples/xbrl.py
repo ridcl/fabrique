@@ -188,7 +188,7 @@ def show_batch(sampler: Sampler, batch):
             batch["concept"][i],
             batch["content"][i],
         )
-        image = Image.open(image_path)
+        image = Image.open(image_path).resize(IMG_SHAPE)
         out = sampler.sample(PROMPT_TEMPLATE.format(question), images=[image])
         color = COLORS[i % len(COLORS)]
         print(f"{color}example {i}: expected = {answer}; actual = {out}{ENDC}")

@@ -7,7 +7,7 @@ from gemma import gm
 from gemma.gm.ckpts._checkpoint import _CheckpointTree
 from jax.sharding import NamedSharding
 
-from fabrique.loading import LoadConfig, update_module_from_params, transform_tree
+from fabrique.loading import LoadConfig, transform_tree, update_module_from_params
 from fabrique.models.gemma.load_rules import RULES
 from fabrique.models.gemma.modeling import Transformer
 from fabrique.utils import ensure_path, set_by_path

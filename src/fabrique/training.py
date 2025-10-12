@@ -1,9 +1,8 @@
 import itertools
 import sys
-from typing import Sized
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, Sized
 
 from tqdm import tqdm
 

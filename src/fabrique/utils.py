@@ -1,6 +1,6 @@
 import logging
+from collections.abc import Mapping, Sequence
 from typing import Any
-from collections.abc import Sequence, Mapping
 
 import jax
 from multimethod import multimethod

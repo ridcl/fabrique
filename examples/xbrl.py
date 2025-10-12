@@ -1,18 +1,21 @@
 import os
-import pandas as pd
+
 import jax
 import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
-from jax.sharding import NamedSharding, PartitionSpec as P
-from flax import nnx
-from PIL import Image
+import pandas as pd
 from datasets import Dataset
+from flax import nnx
+from jax.sharding import NamedSharding
+from jax.sharding import PartitionSpec as P
+from PIL import Image
 
 from fabrique import lora
 from fabrique.models.gemma.modeling import Transformer
 from fabrique.sampling import Sampler
 from fabrique.tokenizer_utils import encode_batch_for_prompt_completion
+
 # from fabrique.training import TrainIterator
 
 
@@ -39,7 +42,9 @@ def create_dataset():
     # filter out rows with other concepts
     df = df[df.concept.isin(top_concepts)]
     # add screenshots and filter out invalid rows
-    df["screenshot"] = df.apply(lambda row: screenshot_path(screenshot_dir, row), axis=1)
+    df["screenshot"] = df.apply(
+        lambda row: screenshot_path(screenshot_dir, row), axis=1
+    )
     df = df[df.apply(lambda row: os.path.exists(row.screenshot), axis=1)]
 
     # collect target dataset
@@ -68,7 +73,7 @@ COMPLETION_TEMPLATE = """{}<end_of_turn>"""
 
 def loss_fn(model, tokens: jax.Array, images: jax.Array, completion_mask: jax.Array):
     inputs = tokens[:, :-1]
-    labels = tokens[:, 1:]    # same tokens, but shifted by one
+    labels = tokens[:, 1:]  # same tokens, but shifted by one
     # note: the model knows about padding via PAD tokens in the input
     logits = model(inputs, images=images).logits
 
@@ -78,13 +83,21 @@ def loss_fn(model, tokens: jax.Array, images: jax.Array, completion_mask: jax.Ar
     return loss, logits
 
 
-
 trainable = lora.ALL_LORA_PARAMS
 
 
 @nnx.jit
-def train_step(model, tokens, images, completion_mask, optimizer: nnx.Optimizer, metrics: nnx.MultiMetric):
-    grad_fn = nnx.value_and_grad(loss_fn, has_aux=True, argnums=nnx.DiffState(0, trainable))
+def train_step(
+    model,
+    tokens,
+    images,
+    completion_mask,
+    optimizer: nnx.Optimizer,
+    metrics: nnx.MultiMetric,
+):
+    grad_fn = nnx.value_and_grad(
+        loss_fn, has_aux=True, argnums=nnx.DiffState(0, trainable)
+    )
     (loss, _), grad = grad_fn(model, tokens, images, completion_mask)
     optimizer.update(model, grad)
     metrics.update(loss=loss)
@@ -104,7 +117,11 @@ def train(sampler: Sampler, dataset: list[dict]):
             break
         metrics.reset()
         for i, batch in enumerate(dataset.iter(batch_size=BATCH_SIZE)):
-            image_paths, questions, answers = batch["screenshot"], batch["concept"], batch["content"]
+            image_paths, questions, answers = (
+                batch["screenshot"],
+                batch["concept"],
+                batch["content"],
+            )
             images = [Image.open(path) for path in image_paths]
             prompts = [PROMPT_TEMPLATE.format(q) for q in questions]
             completions = [COMPLETION_TEMPLATE.format(a) for a in answers]
@@ -112,8 +129,12 @@ def train(sampler: Sampler, dataset: list[dict]):
                 tokenizer, prompts, completions, pad_to_multiple_of=32
             )
             # array of size (B N H W C), where N=1 - number of images per prompt
-            images = jnp.stack([jnp.array(img.resize(IMG_SHAPE)) for img in images])[:, None, ...]
-            loss = train_step(model, tokens, images, completion_mask, optimizer, metrics)
+            images = jnp.stack([jnp.array(img.resize(IMG_SHAPE)) for img in images])[
+                :, None, ...
+            ]
+            loss = train_step(
+                model, tokens, images, completion_mask, optimizer, metrics
+            )
             print(
                 f"Epoch {epoch}, step {step}: avg_loss = {metrics.compute()['loss'].item():.2f}; batch_loss = {loss.item():.2f}"
             )
@@ -123,10 +144,10 @@ def train(sampler: Sampler, dataset: list[dict]):
                 break
 
 
-
 # ==============
 # Save/Load
 # ==============
+
 
 # TODO: move to lora module, adding arg filter = lora.ALL_LORA_PARAMS
 def save_lora(model, ckpt_path: str):
@@ -140,10 +161,7 @@ def load_lora(model, ckpt_path: str) -> Transformer:
     ckpt_path = os.path.abspath(ckpt_path)
     checkpointer = ocp.StandardCheckpointer()
     graphdef, lora_state, other_state = nnx.split(model, trainable, ...)
-    loaded_state = checkpointer.restore(
-        ckpt_path,
-        lora_state
-    )
+    loaded_state = checkpointer.restore(ckpt_path, lora_state)
     model = nnx.merge(graphdef, loaded_state, other_state)
     return model
 
@@ -153,21 +171,24 @@ def load_lora(model, ckpt_path: str) -> Transformer:
 # ===============
 
 COLORS = [
-    '\033[95m',
-    '\033[94m',
-    '\033[96m',
-    '\033[92m',
-    '\033[93m',
-    '\033[91m',
+    "\033[95m",
+    "\033[94m",
+    "\033[96m",
+    "\033[92m",
+    "\033[93m",
+    "\033[91m",
 ]
-ENDC = '\033[0m'
+ENDC = "\033[0m"
 
 
-
-def show_batch(sampler, batch):
+def show_batch(sampler: Sampler, batch):
     for i in range(len(batch["screenshot"])):
-        image_path, question, answer = batch["screenshot"][i], batch["concept"][i], batch["content"][i]
-        image = Image.open(image_path)
+        image_path, question, answer = (
+            batch["screenshot"][i],
+            batch["concept"][i],
+            batch["content"][i],
+        )
+        image = Image.open(image_path).resize(IMG_SHAPE)
         out = sampler.sample(PROMPT_TEMPLATE.format(question), images=[image])
         color = COLORS[i % len(COLORS)]
         print(f"{color}example {i}: expected = {answer}; actual = {out}{ENDC}")
@@ -178,12 +199,21 @@ def show_batch(sampler, batch):
 # ===========
 
 
-def main(training=False, ckpt_path: str = "output/vlm-xbrl-lora-1517.ckpt"):
+def main(training=False, ckpt_path: str = "output/vlm-xbrl-lora.ckpt"):
+    jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
+    jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+    jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+    jax.config.update(
+        "jax_persistent_cache_enable_xla_caches",
+        "xla_gpu_per_fusion_autotune_cache_dir",
+    )
+    jax.config.update("jax_explain_cache_misses", True)
+
     if training and os.path.exists(ckpt_path):
         raise ValueError(
             f"You asked to train, but the checkpoint path {ckpt_path} "
-            "already exists. If you meant to sample pretrained model, use train=False. " +
-            "Otherwise, specify a different checkpoint path"
+            "already exists. If you meant to sample pretrained model, use train=False. "
+            + "Otherwise, specify a different checkpoint path"
         )
 
     dataset = create_dataset()

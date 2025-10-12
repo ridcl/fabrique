@@ -1,12 +1,18 @@
-import pytest
 import jax
 import jax.numpy as jnp
+import pytest
 from flax import nnx
 from PIL import Image
 
-from fabrique.loading import load_model
 from fabrique.sampling import Sampler, sample
 from fabrique.tokenizer_utils import encode_batch
+
+jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
+jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+jax.config.update(
+    "jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir"
+)
 
 
 @pytest.fixture(scope="module")
@@ -78,10 +84,10 @@ def test_prompts_with_lots_of_padding(sampler):
     prompts = [
         TMPL.format("How much is 2 + 2?"),
         TMPL.format(
-            "You are the best mathematician in history. Your solve " +
-            "the most complicated tasks. Now you need to answer the " +
-            "following question in the most concise way: how much is 2 + 2?"
-        )
+            "You are the best mathematician in history. Your solve "
+            + "the most complicated tasks. Now you need to answer the "
+            + "following question in the most concise way: how much is 2 + 2?"
+        ),
     ]
     tokens_batch = encode_batch(tokenizer, prompts)
     tokens_pad = encode_batch(tokenizer, prompts[0:1], pad_to_multiple_of=128)
@@ -101,7 +107,6 @@ def test_prompts_with_lots_of_padding(sampler):
     assert out_text.replace("<end_of_turn>", "").replace("\n", "") == "2 + 2 = 4"
 
 
-
 def test_sampler_class(sampler):
     prompt = """<start_of_turn>user\n<start_of_image>Describe the image in a few sentences<end_of_turn>\n<start_of_turn>model\n"""
     image = Image.open("tests/bird.jpg")
@@ -115,7 +120,12 @@ def test_sampler_class(sampler):
     assert completion == target
 
     completion = sampler.sample(
-        prompt, images=[image], max_length=1024, temperature=1, pad_to_multiple_of=512, rngs=rngs
+        prompt,
+        images=[image],
+        max_length=1024,
+        temperature=1,
+        pad_to_multiple_of=512,
+        rngs=rngs,
     )
     target = "Here's a description of the image:\n\nThe image showcases a vibrant red robin perched on a weathered branch. The bird's plumage displays a beautiful mix of orange, gray, and white feathers, with a distinctive red breast. It has a dark, alert eye and a pointed beak, and the soft lighting highlights its fluffy appearance against the blurred background of twigs and branches."
     assert completion == target

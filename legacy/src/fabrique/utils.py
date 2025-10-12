@@ -1,11 +1,10 @@
-import re
 import logging
+import re
 from typing import Dict, List
 
 import jax
 from flax.core import FrozenDict
 from jax import tree_util
-
 
 logger = logging.getLogger("fabrique")
 
@@ -32,7 +31,6 @@ def update_tree(a: Dict, b: Dict):
             update_tree(a[key], b[key])
         else:
             a[key] = b[key]
-
 
 
 def print_var(name: str, x):
@@ -164,4 +162,3 @@ def check_and_update_fields(args, **kwargs):
             full_class_name = f"{klass.__module__}.{klass}"
             raise ValueError(f"{full_class_name} doesn't have attribute {k}")
     return args
-

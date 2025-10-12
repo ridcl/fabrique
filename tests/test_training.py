@@ -32,4 +32,3 @@ def test_train_iter():
     assert list(ti) == [(5, 10), (15, 5), (10, 15), (5, 10), (15,)]
     ti = TrainIterator([5, 10, 15], max_epochs=3, max_steps=4, batch_size=2)
     assert list(ti) == [(5, 10), (15, 5), (10, 15), (5, 10)]
-

@@ -1,10 +1,6 @@
 import jax
 
-from fabrique.utils import (
-    get_by_path,
-    set_by_path,
-    ensure_path
-)
+from fabrique.utils import ensure_path, get_by_path, set_by_path
 
 
 def test_get_set_by_path():
@@ -63,7 +59,7 @@ def test_ensure_path():
     assert obj == {"a": [{"b": 1, "c": {}}]}
 
     ensure_path(obj, "a.5.c.d")
-    assert obj == {'a': [{'b': 1, 'c': {}}, {}, {}, {}, {}, {'c': {'d': {}}}]}
+    assert obj == {"a": [{"b": 1, "c": {}}, {}, {}, {}, {}, {"c": {"d": {}}}]}
 
     set_by_path(obj, "a.5.c.d", 4, ignore_leave_type=True)
-    assert obj == {'a': [{'b': 1, 'c': {}}, {}, {}, {}, {}, {'c': {'d': 4}}]}
+    assert obj == {"a": [{"b": 1, "c": {}}, {}, {}, {}, {}, {"c": {"d": 4}}]}

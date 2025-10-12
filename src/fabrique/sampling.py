@@ -17,12 +17,6 @@ LayerCache = dict[str, jax.Array]  # gemma.gm.nn._modules.LayerCache
 Cache = dict[str, LayerCache]  # gemma.gm.nn._config.Cache
 
 
-jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
-jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
-jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
-jax.config.update("jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir")
-
-
 def sample_token(
     rng, logits, temperature: float = 1.0, top_p: float = 1.0, top_k: int = 50
 ):
@@ -256,12 +250,13 @@ def sample(
         cache=out.cache,
         rng=rng,
         full_attention_mask=full_attention_mask,
-        init_cache_length=out.cache["layer_0"]["end_index"][0], #jnp.asarray(init_cache_length),
+        init_cache_length=out.cache["layer_0"]["end_index"][
+            0
+        ],  # jnp.asarray(init_cache_length),
     )
 
     state = jax.lax.while_loop(sample_cond_fn, sample_body_fn, state)
     return state.predicted_tokens
-
 
 
 class Sampler:

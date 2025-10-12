@@ -66,8 +66,10 @@ def convert_safetensor(rules: List[ConversionRule], safe_key: str, safe_val):
         if path_val:
             return path_val
     if isinstance(safe_val, jax.Array):
-        val_error_str = f"The value is an array with shape={safe_val.shape} " + \
-            f"and dtype={safe_val.dtype}"
+        val_error_str = (
+            f"The value is an array with shape={safe_val.shape} "
+            + f"and dtype={safe_val.dtype}"
+        )
     else:
         val_error_str = f"The value is of type {type(safe_val)}"
     raise ValueError(
@@ -121,7 +123,9 @@ def update_module_from_safe(
         apply_rules(module, rules, flat)
 
 
-def update_module_from_params(module: nnx.Module, rules: List[ConversionRule], params: dict):
+def update_module_from_params(
+    module: nnx.Module, rules: List[ConversionRule], params: dict
+):
     """
     Update Flax NNX module from a Flax Linen param tree
     """
@@ -129,8 +133,8 @@ def update_module_from_params(module: nnx.Module, rules: List[ConversionRule], p
     def keys_to_path(keys):
         return ".".join(key.key for key in keys)
 
-    state = nnx.state(module)                   # the model's state, a pure pytree
-    pspecs = nnx.get_partition_spec(state)      # strip out the annotations from state
+    state = nnx.state(module)  # the model's state, a pure pytree
+    pspecs = nnx.get_partition_spec(state)  # strip out the annotations from state
     # TODO: use mesh context manager (from outside?)
     # TODO: move to apply_rules or somewhere to first map path in params and in model
     # TODO: or maybe rework the whole loading mechanism

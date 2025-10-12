@@ -3,14 +3,14 @@ import logging
 import pkgutil
 import re
 from dataclasses import dataclass
-from typing import Callable, Any, Optional
+from typing import Any, Callable, Optional
 
 import jax
 from flax import nnx
 from jax.sharding import NamedSharding
 
 from fabrique import models
-from fabrique.utils import get_by_path, set_by_path, keys_to_path, ensure_path
+from fabrique.utils import ensure_path, get_by_path, keys_to_path, set_by_path
 
 logger = logging.getLogger("fabrique")
 
@@ -78,7 +78,7 @@ def convert_path(path: str, in_pattern: str, out_pattern: str | RuleIgnore):
 
 def update_module_from_params(
     module: nnx.Module,
-    rules: tuple[str, str],
+    rules: tuple[str, str, Any],
     params: dict,
     *,
     mesh: jax.sharding.Mesh | None = None,

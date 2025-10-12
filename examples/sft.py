@@ -1,16 +1,17 @@
 from typing import Tuple
 
-import numpy as np
 import jax
 import jax.numpy as jnp
+import numpy as np
 import optax
 import tensorflow as tf  # for logging
+from datasets import Dataset, load_dataset
 from flax import nnx
-from datasets import load_dataset, Dataset
 
-from fabrique.sampling import Sampler
 from fabrique.lora import LoRAEinsum
+from fabrique.sampling import Sampler
 from fabrique.tokenizer_utils import encode_batch_for_prompt_completion
+
 # from fabrique.training import TrainIterator
 
 
@@ -20,12 +21,13 @@ MAX_STEPS = 1000
 MAX_EPOCHS = 10
 MAX_SEQ_LENGTH = 4096
 
-PROMPT_TEMPLATE = """<start_of_turn>user\n<start_of_image>{}<end_of_turn>\n<start_of_turn>model\n"""
+PROMPT_TEMPLATE = (
+    """<start_of_turn>user\n<start_of_image>{}<end_of_turn>\n<start_of_turn>model\n"""
+)
 COMPLETION_TEMPLATE = """{{"answer": "{}"}}<end_of_turn>"""
 
 
 summary_writer = tf.summary.create_file_writer("/tmp/tensorboard")
-
 
 
 # def encode_batch(
@@ -103,7 +105,7 @@ summary_writer = tf.summary.create_file_writer("/tmp/tensorboard")
 
 def loss_fn(model, tokens: jax.Array, images: jax.Array, completion_mask: jax.Array):
     inputs = tokens[:, :-1]
-    labels = tokens[:, 1:]    # same tokens, but shifted by one
+    labels = tokens[:, 1:]  # same tokens, but shifted by one
     # note: the model knows about padding via PAD tokens in the input
     logits = model(inputs, images=images).logits
 
@@ -113,16 +115,23 @@ def loss_fn(model, tokens: jax.Array, images: jax.Array, completion_mask: jax.Ar
     return loss, logits
 
 
-
 trainable = nnx.All(
-    nnx.Param,
-    nnx.Any(nnx.PathContains("lora_a"), nnx.PathContains("lora_b"))
+    nnx.Param, nnx.Any(nnx.PathContains("lora_a"), nnx.PathContains("lora_b"))
 )
 
 
 @nnx.jit
-def train_step(model, tokens, images, completion_mask, optimizer: nnx.Optimizer, metrics: nnx.MultiMetric):
-    grad_fn = nnx.value_and_grad(loss_fn, has_aux=True, argnums=nnx.DiffState(0, trainable))
+def train_step(
+    model,
+    tokens,
+    images,
+    completion_mask,
+    optimizer: nnx.Optimizer,
+    metrics: nnx.MultiMetric,
+):
+    grad_fn = nnx.value_and_grad(
+        loss_fn, has_aux=True, argnums=nnx.DiffState(0, trainable)
+    )
     (loss, _), grad = grad_fn(model, tokens, images, completion_mask)
     optimizer.update(model, grad)
     metrics.update(loss=loss)
@@ -143,15 +152,23 @@ def train(sampler: Sampler, dataset: Dataset):
             break
         metrics.reset()
         for i, batch in enumerate(dataset.iter(batch_size=BATCH_SIZE)):
-            images, questions, answers = batch["image"], batch["question"], batch["answer"]
+            images, questions, answers = (
+                batch["image"],
+                batch["question"],
+                batch["answer"],
+            )
             prompts = [PROMPT_TEMPLATE.format(q) for q in questions]
             completions = [COMPLETION_TEMPLATE.format(a) for a in answers]
             tokens, completion_mask = encode_batch_for_prompt_completion(
                 tokenizer, prompts, completions, pad_to_multiple_of=32
             )
             # array of size (B N H W C), where N=1 - number of images per prompt
-            images = jnp.stack([jnp.array(img.resize(IMG_SHAPE)) for img in images])[:, None, ...]
-            loss = train_step(model, tokens, images, completion_mask, optimizer, metrics)
+            images = jnp.stack([jnp.array(img.resize(IMG_SHAPE)) for img in images])[
+                :, None, ...
+            ]
+            loss = train_step(
+                model, tokens, images, completion_mask, optimizer, metrics
+            )
             print(
                 f"Epoch {epoch}, step {step}: avg_loss = {metrics.compute()['loss'].item():.2f}; batch_loss = {loss.item():.2f}"
             )
@@ -163,21 +180,24 @@ def train(sampler: Sampler, dataset: Dataset):
                 break
 
 
-
 COLORS = [
-    '\033[95m',
-    '\033[94m',
-    '\033[96m',
-    '\033[92m',
-    '\033[93m',
-    '\033[91m',
+    "\033[95m",
+    "\033[94m",
+    "\033[96m",
+    "\033[92m",
+    "\033[93m",
+    "\033[91m",
 ]
-ENDC = '\033[0m'
+ENDC = "\033[0m"
 
 
 def show_batch(sampler, batch):
     for i in range(len(batch["question"])):
-        image, question, answer = batch["image"][i], batch["question"][i], batch["answer"][i]
+        image, question, answer = (
+            batch["image"][i],
+            batch["question"][i],
+            batch["answer"][i],
+        )
         out = sampler.sample(PROMPT_TEMPLATE.format(question), images=[image])
         color = COLORS[i % len(COLORS)]
         print(color + f"example {i}: " + out + ENDC)

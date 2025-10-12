@@ -58,7 +58,6 @@ def encode_batch(
     return tokenized_sequences
 
 
-
 def encode_batch_for_prompt_completion(
     tokenizer,
     prompts: list[str],

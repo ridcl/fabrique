@@ -1,3 +1,4 @@
+import re
 import jax
 import jax.numpy as jnp
 import pytest
@@ -13,6 +14,22 @@ jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 jax.config.update(
     "jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir"
 )
+
+
+def similar_texts(text1, text2, threshold=0.5, common_prefix=30):
+    """
+    Fuzzy comparison between two text. In these tests, this functions
+    ensures that the LLM doesn't generate garbage and generally follows
+    the given topic.
+
+    Note that precise comparison of long generated text is impossible
+    because of slight differences in installed packages.
+    """
+    pattern = r"[.,\ \n\t]"
+    words1 = set(re.split(pattern, text1))
+    words2 = set(re.split(pattern, text2))
+    score = len(words1 & words2) / len(words1 | words2)
+    return text1[:common_prefix] == text2[:common_prefix] and score >= threshold
 
 
 @pytest.fixture(scope="module")
@@ -47,7 +64,7 @@ def test_single_prompt_with_image(sampler):
     )
     completion = tokenizer.decode(out_tokens[0])
     target = "Here's a description of the image:\n\nThe image showcases a vibrant European Robin perched on a thin, gray branch. The bird has a distinctive orange breast and red face, contrasting beautifully with its gray and white plumage. It features a bright black eye and a short, pointed beak, creating a charming and detailed portrait of this iconic songbird.<end_of_turn>"
-    assert completion == target
+    assert similar_texts(completion, target)
 
 
 def test_text_only_batch(sampler):
@@ -74,7 +91,8 @@ def test_text_only_batch(sampler):
         "A simple, sturdy form,\nHolding weight with quiet grace,\nBeneath a weary form. \n\nJust wood, or metal cold,\nA brief support, then released,\nA silent, humble role.<end_of_turn>",
         "John Snow was a 19th-century English anesthesiologist and physician who is best known for his pioneering work in antiseptic surgery and for documenting the first modern outbreak of cholera in London.<end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn>",
     ]
-    assert completions == targets
+    assert similar_texts(completions[0], targets[0])
+    assert similar_texts(completions[1], targets[1])
 
 
 def test_prompts_with_lots_of_padding(sampler):
@@ -128,4 +146,4 @@ def test_sampler_class(sampler):
         rngs=rngs,
     )
     target = "Here's a description of the image:\n\nThe image showcases a vibrant red robin perched on a weathered branch. The bird's plumage displays a beautiful mix of orange, gray, and white feathers, with a distinctive red breast. It has a dark, alert eye and a pointed beak, and the soft lighting highlights its fluffy appearance against the blurred background of twigs and branches."
-    assert completion == target
+    assert similar_texts(completion, target)

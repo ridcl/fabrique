@@ -6,7 +6,7 @@ def get_ngrams(tokens: List[int], n: int) -> Counter:
     """Extract n-grams from a list of tokens."""
     ngrams = []
     for i in range(len(tokens) - n + 1):
-        ngrams.append(tuple(tokens[i:i+n]))
+        ngrams.append(tuple(tokens[i : i + n]))
     return Counter(ngrams)
 
 
@@ -44,11 +44,7 @@ def rouge_n(reference: List[int], candidate: List[int], n: int = 1) -> dict:
     else:
         f1 = 0.0
 
-    return {
-        "precision": precision,
-        "recall": recall,
-        "f1": f1
-    }
+    return {"precision": precision, "recall": recall, "f1": f1}
 
 
 def lcs_length(x: List[int], y: List[int]) -> Tuple[int, List[List[int]]]:
@@ -67,10 +63,10 @@ def lcs_length(x: List[int], y: List[int]) -> Tuple[int, List[List[int]]]:
 
     for i in range(1, m + 1):
         for j in range(1, n + 1):
-            if x[i-1] == y[j-1]:
-                dp[i][j] = dp[i-1][j-1] + 1
+            if x[i - 1] == y[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
             else:
-                dp[i][j] = max(dp[i-1][j], dp[i][j-1])
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
 
     return dp[m][n], dp
 
@@ -99,11 +95,7 @@ def rouge_l(reference: List[int], candidate: List[int]) -> dict:
     else:
         f1 = 0.0
 
-    return {
-        "precision": precision,
-        "recall": recall,
-        "f1": f1
-    }
+    return {"precision": precision, "recall": recall, "f1": f1}
 
 
 # # Example usage

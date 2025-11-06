@@ -5,8 +5,6 @@ from flax import nnx
 from gemma.multimodal.vision import VisionInitEmbeddings
 
 
-
-
 class VisionExit(nnx.Module):
     """The vision exit layer.
 
@@ -19,8 +17,8 @@ class VisionExit(nnx.Module):
     output_length: int = 256
 
     def __call__(
-        self, x: jax.Array # Float["B INPUT_LENGTH D"]
-    ) -> jax.Array: # Float["B OUTPUT_LENGTH D"]:
+        self, x: jax.Array  # Float["B INPUT_LENGTH D"]
+    ) -> jax.Array:  # Float["B OUTPUT_LENGTH D"]:
         cur_length = x.shape[1]
         if cur_length == self.output_length:
             return x
@@ -62,9 +60,7 @@ class SigLiPFromPatches(nnx.Module):
     ) -> Float["B N siglip_embed_dim"]:
         chex.assert_rank(patches, 4)
         batch_size, num_frames, num_patches, num_channels = patches.shape
-        num_patches_one_side = (
-            self.image_height // self.siglip_encoder.patch_size[0]
-        )
+        num_patches_one_side = self.image_height // self.siglip_encoder.patch_size[0]
         chex.assert_equal(num_channels, 3 * self.siglip_encoder.patch_size[0] ** 2)
         chex.assert_equal(num_patches, num_patches_one_side**2)
         flattened_images = einops.rearrange(

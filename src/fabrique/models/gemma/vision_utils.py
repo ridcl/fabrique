@@ -16,7 +16,7 @@ class MlpBlock(nnx.Module):
         dropout: float = 0.0,
         dtype_mm: str = "float32",
         *,
-        rngs: nnx.Rngs
+        rngs: nnx.Rngs,
     ):
         self.block_id = block_id
         self.mlp_dim = mlp_dim
@@ -27,13 +27,12 @@ class MlpBlock(nnx.Module):
             kernel_init=nnx.initializers.xavier_uniform(),
             bias_init=nnx.initializers.normal(stddev=1e-6),
             dtype=dtype_mm,
-            rngs=rngs
+            rngs=rngs,
         )
         mlp_dim = self.mlp_dim or 4 * input_dim
         self.linear1 = linear(input_dim, mlp_dim)
         self.do = nnx.Dropout(rate=self.dropout, rngs=rngs)
         self.linear2 = linear(mlp_dim, input_dim)
-
 
     def __call__(self, x: jax.Array, deterministic: bool = True) -> jax.Array:
         """Applies Transformer MlpBlock module."""

@@ -6,6 +6,7 @@ from gemma.multimodal import vision_utils as vu
 from fabrique.models.gemma.vision_utils import MlpBlock
 from fabrique.loading import LoadRule as R, update_module_from_params
 
+
 @pytest.mark.parametrize(
     "input_dim,mlp_dim,deterministic,dtype",
     [
@@ -13,9 +14,11 @@ from fabrique.loading import LoadRule as R, update_module_from_params
         (4, 8, True, jnp.float32),
         # (4, None, False, jnp.float32),
         (4, None, True, jnp.bfloat16),
-    ]
+    ],
 )
-def test_mlp_block(input_dim: int, mlp_dim: int, deterministic: bool, dtype: jax.typing.DTypeLike):
+def test_mlp_block(
+    input_dim: int, mlp_dim: int, deterministic: bool, dtype: jax.typing.DTypeLike
+):
     block_id = 0
     batch_size = 2
     dropout = 0.5

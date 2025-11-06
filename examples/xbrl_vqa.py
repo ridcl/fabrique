@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 
 import jax
 import jax.numpy as jnp
@@ -25,7 +26,7 @@ from fabrique.rouge import rouge_n, rouge_l
 # =====================
 
 
-def create_dataset():
+def create_dataset(max_rows=None):
     path = os.path.expanduser("output/vqa/dataset_1k.parquet")
     screenshot_dir = os.path.dirname(path) + "/screenshots"
     df = pd.read_parquet(path)
@@ -33,12 +34,16 @@ def create_dataset():
         lambda p: p.replace("/ml-datasets/xbrl_facts/screenshots", screenshot_dir)
     )
     df = df[df.apply(lambda row: os.path.exists(row.image_path), axis=1)]
+    if max_rows:
+        df = df.iloc[0:max_rows]
 
-    # since this is SFT, take only good evidence
-    df = df[df.is_good]
+    # replace bad evidence with "(none)"
+    df["evidence"] = df.apply(
+        lambda row: row["evidence"] if row["is_good"] else "(none)", axis=1
+    )
 
     assert df.shape[0] > 0
-    return Dataset.from_pandas(df).train_test_split(test_size=0.1)
+    return Dataset.from_pandas(df).train_test_split(test_size=0.1, seed=108)
 
 
 # ===========
@@ -96,20 +101,30 @@ def train_step(
     grad_fn = nnx.value_and_grad(
         loss_fn, has_aux=True, argnums=nnx.DiffState(0, trainable)
     )
+    # print(f"==== memory before gradient calc: {get_memory_gb()}")
     (loss, _), grad = grad_fn(model, tokens, images, completion_mask)
+    # print(f"==== memory before update: {get_memory_gb()}")
     optimizer.update(model, grad)
+    # print(f"==== memory before metric update: {get_memory_gb()}")
     metrics.update(loss=loss)
     return loss
 
 
-def train(sampler: Sampler, trainset: Dataset, testset: Dataset):
+def train(sampler: Sampler, trainset: Dataset, testset: Dataset, ckpt_base_path: str):
+    # print(f"==== memory at start: {get_memory_gb()}")
     tokenizer = sampler.tokenizer
     model = sampler.model
+    if ckpt_path := latest_checkpoint_path(ckpt_base_path):
+        print(f"Loading LoRA checkpoint from {ckpt_path}")
+        model = load_lora(model, ckpt_path)
+        sampler.model = model
+
     optimizer = nnx.Optimizer(model, optax.sgd(1e-3), wrt=trainable)
     metrics = nnx.MultiMetric(loss=nnx.metrics.Average("loss"))
     gen_metrics, _ = calc_gen_metrics(sampler, testset)
     print(f"!!! Before training: gen_metrics = {gen_metrics}")
     step = 0
+    # print(f"==== memory before train loop: {get_memory_gb()}")
     for epoch in range(MAX_EPOCHS):
         if step == MAX_STEPS:
             break
@@ -122,10 +137,13 @@ def train(sampler: Sampler, trainset: Dataset, testset: Dataset):
                 batch["evidence"],
             )
             images = [Image.open(path) for path in image_paths]
-            prompts = [PROMPT_TEMPLATE.format(question=q, markdown=md) for q, md in zip(questions, markdowns)]
+            prompts = [
+                PROMPT_TEMPLATE.format(question=q, markdown=md)
+                for q, md in zip(questions, markdowns)
+            ]
             completions = [COMPLETION_TEMPLATE.format(a) for a in answers]
             tokens, completion_mask = encode_batch_for_prompt_completion(
-                tokenizer, prompts, completions, pad_to_multiple_of=32
+                tokenizer, prompts, completions, pad_to_multiple_of=64
             )
             # array of size (B N H W C), where N=1 - number of images per prompt
             images = jnp.stack([jnp.array(img.resize(IMG_SHAPE)) for img in images])[
@@ -139,11 +157,18 @@ def train(sampler: Sampler, trainset: Dataset, testset: Dataset):
             )
             step += 1
             if step == MAX_STEPS:
-                print("Finished training!")
-                break
-            if step % 200 == 0:
                 gen_metrics, _ = calc_gen_metrics(sampler, testset)
                 print(f"!!! Epoch {epoch}, step {step}: gen_metrics = {gen_metrics}")
+                print("Finished training!")
+                break
+            if step % 100 == 0:
+                gen_metrics, _ = calc_gen_metrics(sampler, testset)
+                print(f"!!! Epoch {epoch}, step {step}: gen_metrics = {gen_metrics}")
+                ckpt_path = os.path.join(f"{ckpt_base_path}/{datetime.now().strftime('%Y-%m_%H-%M-%S')}.ckpt")
+                print(f"Saving LoRA checkpoint to {ckpt_path}")
+                save_lora(model, ckpt_path)
+            # print(f"==== memory at step {step}: {get_memory_gb()}")
+
 
 # ==============
 # Save/Load
@@ -163,8 +188,19 @@ def load_lora(model, ckpt_path: str) -> Transformer:
     checkpointer = ocp.StandardCheckpointer()
     graphdef, lora_state, other_state = nnx.split(model, trainable, ...)
     loaded_state = checkpointer.restore(ckpt_path, lora_state)
+    del lora_state  # free memory; note that old model still references it
     model = nnx.merge(graphdef, loaded_state, other_state)
     return model
+
+
+def latest_checkpoint_path(ckpt_base_path: str):
+    if not os.path.exists(ckpt_base_path):
+        return None
+    filenames = os.listdir(ckpt_base_path)
+    if len(filenames) == 0:
+        return None
+    latest = sorted(filenames)[-1]
+    return os.path.join(ckpt_base_path, latest)
 
 
 # ===============
@@ -191,7 +227,9 @@ def show_batch(sampler: Sampler, batch):
             batch["evidence"][i],
         )
         image = Image.open(image_path).resize(IMG_SHAPE)
-        out = sampler.sample(PROMPT_TEMPLATE.format(question=question, markdown=markdown), images=[image])
+        out = sampler.sample(
+            PROMPT_TEMPLATE.format(question=question, markdown=markdown), images=[image]
+        )
         color = COLORS[i % len(COLORS)]
         print(
             f"""\n{color}-------------- example {i} -------------
@@ -201,39 +239,16 @@ def show_batch(sampler: Sampler, batch):
         )
 
 
-def show_metrics(sampler: Sampler, batch):
-    metrics = []
-    for i in range(len(batch["image_path"])):
-        image_path, markdown, question, answer = (
-            batch["image_path"][i],
-            batch["markdown"][i],
-            batch["question"][i],
-            batch["evidence"][i],
-        )
-        image = Image.open(image_path).resize(IMG_SHAPE)
-        out = sampler.sample(PROMPT_TEMPLATE.format(question=question, markdown=markdown), images=[image])
-        ans_tokens = sampler.tokenizer.encode(answer)
-        out_tokens = sampler.tokenizer.encode(out)
-        print("-" * 20 + f" {i:03} " + "-" * 20)
-        print("ROUGE-1:", rouge_n(ans_tokens, out_tokens, n=1))
-        print("ROUGE-2:", rouge_n(ans_tokens, out_tokens, n=2))
-        print("ROUGE-3:", rouge_n(ans_tokens, out_tokens, n=3))
-        print("ROUGE-L:", rouge_l(ans_tokens, out_tokens))
-        print(f"""EXPECTED: {answer[:100]}\nACTUAL: {out[:100]}""")
-        # usign ROUGE-L as the main metric
-        metrics.append(rouge_l(ans_tokens, out_tokens))
-    avg_precision = sum([m["precision"] for m in metrics]) / len(batch)
-    avg_recall = sum([m["recall"] for m in metrics]) / len(batch)
-    avg_f1 = sum([m["f1"] for m in metrics]) / len(batch)
-
-
-
 def calc_gen_metrics(sampler: Sampler, testset) -> dict[str, float]:
     from tqdm import tqdm
+
     metrics = []
     answers = []
     output = []
-    for batch in tqdm(testset.iter(batch_size=BATCH_SIZE), total=len(testset) // BATCH_SIZE):
+    testset = testset.select(range(10))  # hack for faster metric calculation
+    for batch in tqdm(
+        testset.iter(batch_size=BATCH_SIZE), total=len(testset) // BATCH_SIZE
+    ):
         for i in range(len(batch["image_path"])):
             image_path, markdown, question, answer = (
                 batch["image_path"][i],
@@ -242,7 +257,10 @@ def calc_gen_metrics(sampler: Sampler, testset) -> dict[str, float]:
                 batch["evidence"][i],
             )
             image = Image.open(image_path).resize(IMG_SHAPE)
-            out = sampler.sample(PROMPT_TEMPLATE.format(question=question, markdown=markdown), images=[image])
+            out = sampler.sample(
+                PROMPT_TEMPLATE.format(question=question, markdown=markdown),
+                images=[image],
+            )
             ans_tokens = sampler.tokenizer.encode(answer)
             out_tokens = sampler.tokenizer.encode(out)
             # print("-" * 20 + f" {i:03} " + "-" * 20)
@@ -258,7 +276,7 @@ def calc_gen_metrics(sampler: Sampler, testset) -> dict[str, float]:
     avg_metrics = {
         "precision": sum([m["precision"] for m in metrics]) / len(testset),
         "recall": sum([m["recall"] for m in metrics]) / len(testset),
-        "f1": sum([m["f1"] for m in metrics]) / len(testset)
+        "f1": sum([m["f1"] for m in metrics]) / len(testset),
     }
     details = {
         "answers": answers,
@@ -272,7 +290,28 @@ def calc_gen_metrics(sampler: Sampler, testset) -> dict[str, float]:
 # ===========
 
 
-def main(training=False, ckpt_path: str = "output/vqa/lora_v2.ckpt"):
+def get_memory_gb():
+    """Get current GPU memory usage in MB"""
+    out = {}
+    for i, device in enumerate(jax.devices()):
+        stats = device.memory_stats()
+        out[i] = stats["bytes_in_use"] / (1024**3)
+    return out
+
+
+def show_result(sampler, testset):
+    avg_metrics, details = calc_gen_metrics(sampler, testset)
+    for question, answer, output in zip(
+        testset["question"], details["answers"], details["output"]
+    ):
+        print(f"{COLORS[0]}Q: {question}\n{ENDC}")
+        print(f"{COLORS[1]}A: {answer}\n{ENDC}")
+        print(f"{COLORS[2]}O: {output}{ENDC}")
+        print("-" * 40)
+
+
+
+def main(ckpt_base_path: str = "output/vqa_lora"):
     jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
     jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
     jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
@@ -282,13 +321,6 @@ def main(training=False, ckpt_path: str = "output/vqa/lora_v2.ckpt"):
     )
     # jax.config.update("jax_explain_cache_misses", True)
 
-    if training and os.path.exists(ckpt_path):
-        raise ValueError(
-            f"You asked to train, but the checkpoint path {ckpt_path} "
-            "already exists. If you meant to sample pretrained model, use train=False. "
-            + "Otherwise, specify a different checkpoint path"
-        )
-
     dataset = create_dataset()
     trainset, testset = dataset["train"], dataset["test"]
 
@@ -297,23 +329,18 @@ def main(training=False, ckpt_path: str = "output/vqa/lora_v2.ckpt"):
     model = sampler.model
     model.vision_encoder.rngs = nnx.Rngs(0)  # hack to work around NNX <> Linen interop
 
+    mesh = jax.make_mesh((1, len(jax.devices())), ("data", "model"))
     lora_sharding = NamedSharding(mesh, P())
     lora.apply(model, rank=64, sharding=lora_sharding, rngs=nnx.Rngs(0))
 
-    # TODO: check sharding, investigate why GPUs are not loaded equally
+    train(sampler, trainset, testset, ckpt_base_path)
+    # save_lora(sampler.model, ckpt_path)
 
-    # TODO: evaluate similarity using ROUGE
-
-    if training:
-        # # check output before training
-        # batch = next(trainset.iter(batch_size=8))
-        # show_batch(sampler, batch)
-
-        train(sampler, trainset, testset)
-        save_lora(sampler.model, ckpt_path)
-    else:
-        sampler.model = load_lora(sampler.model, ckpt_path)
 
     # check output after training
     # now it should follow the format in the training set
-    show_metrics(sampler, next(testset.iter(8)))
+    # sampler.model = load_lora(sampler.model, ckpt_path)
+    # show_metrics(sampler, next(testset.iter(8)))
+
+
+# main(training=True)

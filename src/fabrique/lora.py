@@ -1,19 +1,22 @@
-# adapted from:
-# https://github.com/google-deepmind/gemma/blob/22130bffc1e0fb4255de9758426865cf7e9430a8/gemma/peft/_lora.py
+import os
 from typing import Optional, Sequence
+from multimethod import multimethod
 
 import jax
 import jax.numpy as jnp
+import orbax.checkpoint as ocp
 from flax import nnx
 from flax.nnx.filterlib import Any as AnyOf
 from flax.nnx.filterlib import Filter, OfType
 from gemma.peft import _einsum_utils
-from multimethod import multimethod
+
 
 # ==================
 # LoRA wrappers
 # ==================
 
+# adapted from:
+# https://github.com/google-deepmind/gemma/blob/22130bffc1e0fb4255de9758426865cf7e9430a8/gemma/peft/_lora.py
 
 class LoRAEinsumAdapter(nnx.Module):
     """LoRA einsum module.
@@ -171,3 +174,36 @@ def merge(root: nnx.Module):
     #             # adapter_kernel = jnp.einsum("Dr,rNH->NDH")
     #             # base_module.kernel += adapter.lora_a @ adapter.lora_b
     #             setattr(module, attr_name, base_module)
+
+
+
+# =======================
+# Save/Load
+# =======================
+
+
+def save(model, ckpt_path: str, filter=ALL_LORA_PARAMS):
+    ckpt_path = os.path.abspath(ckpt_path)
+    checkpointer = ocp.StandardCheckpointer()
+    _graphdef, lora_state, _other_state = nnx.split(model, filter, ...)
+    checkpointer.save(ckpt_path, lora_state)
+
+
+def load(model, ckpt_path: str, filter=ALL_LORA_PARAMS):
+    ckpt_path = os.path.abspath(ckpt_path)
+    checkpointer = ocp.StandardCheckpointer()
+    graphdef, lora_state, other_state = nnx.split(model, filter, ...)
+    loaded_state = checkpointer.restore(ckpt_path, lora_state)
+    del lora_state  # free memory; note that old model still references it
+    model = nnx.merge(graphdef, loaded_state, other_state)
+    return model
+
+
+def latest_checkpoint_path(ckpt_base_path: str):
+    if not os.path.exists(ckpt_base_path):
+        return None
+    filenames = os.listdir(ckpt_base_path)
+    if len(filenames) == 0:
+        return None
+    latest = sorted(filenames)[-1]
+    return os.path.join(ckpt_base_path, latest)

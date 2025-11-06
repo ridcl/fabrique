@@ -4,7 +4,6 @@ from datetime import datetime
 import jax
 import jax.numpy as jnp
 import optax
-import orbax.checkpoint as ocp
 import pandas as pd
 from datasets import Dataset
 from flax import nnx
@@ -13,17 +12,91 @@ from jax.sharding import PartitionSpec as P
 from PIL import Image
 
 from fabrique import lora
-from fabrique.models.gemma.modeling import Transformer
 from fabrique.sampling import Sampler
 from fabrique.tokenizer_utils import encode_batch_for_prompt_completion
-from fabrique.rouge import rouge_n, rouge_l
+from examples.rouge import rouge_n, rouge_l
 
 # from fabrique.training import TrainIterator
 
 
-# =====================
+# ===============================
+# Interactive helpers
+# ===============================
+
+COLORS = [
+    "\033[95m",
+    "\033[94m",
+    "\033[96m",
+    "\033[92m",
+    "\033[93m",
+    "\033[91m",
+]
+ENDC = "\033[0m"
+
+
+def show_batch(sampler: Sampler, batch):
+    for i in range(len(batch["image_path"])):
+        image_path, markdown, question, answer = (
+            batch["image_path"][i],
+            batch["markdown"][i],
+            batch["question"][i],
+            batch["evidence"][i],
+        )
+        image = Image.open(image_path).resize(IMG_SHAPE)
+        out = sampler.sample(
+            PROMPT_TEMPLATE.format(question=question, markdown=markdown), images=[image]
+        )
+        color = COLORS[i % len(COLORS)]
+        print(
+            f"""\n{color}-------------- example {i} -------------
+            EXPECTED: {answer}
+            ACTUAL: {out}{ENDC}
+            """
+        )
+
+
+def calc_gen_metrics(sampler: Sampler, testset) -> dict[str, float]:
+    from tqdm import tqdm
+
+    metrics = []
+    answers = []
+    output = []
+    testset = testset.select(range(10))  # hack for faster metric calculation
+    for batch in tqdm(
+        testset.iter(batch_size=BATCH_SIZE), total=len(testset) // BATCH_SIZE
+    ):
+        for i in range(len(batch["image_path"])):
+            image_path, markdown, question, answer = (
+                batch["image_path"][i],
+                batch["markdown"][i],
+                batch["question"][i],
+                batch["evidence"][i],
+            )
+            image = Image.open(image_path).resize(IMG_SHAPE)
+            out = sampler.sample(
+                PROMPT_TEMPLATE.format(question=question, markdown=markdown),
+                images=[image],
+            )
+            ans_tokens = sampler.tokenizer.encode(answer)
+            out_tokens = sampler.tokenizer.encode(out)
+            metrics.append(rouge_l(ans_tokens, out_tokens))
+            answers.append(answer)
+            output.append(out)
+    avg_metrics = {
+        "precision": sum([m["precision"] for m in metrics]) / len(testset),
+        "recall": sum([m["recall"] for m in metrics]) / len(testset),
+        "f1": sum([m["f1"] for m in metrics]) / len(testset),
+    }
+    details = {
+        "answers": answers,
+        "output": output,
+    }
+    return avg_metrics, details
+
+
+# =============================
 # Dataset preparation
-# =====================
+# =============================
 
 
 def create_dataset(max_rows=None):
@@ -46,9 +119,9 @@ def create_dataset(max_rows=None):
     return Dataset.from_pandas(df).train_test_split(test_size=0.1, seed=108)
 
 
-# ===========
+# =====================
 # Training
-# ===========
+# =====================
 
 
 BATCH_SIZE = 1
@@ -114,9 +187,9 @@ def train(sampler: Sampler, trainset: Dataset, testset: Dataset, ckpt_base_path:
     # print(f"==== memory at start: {get_memory_gb()}")
     tokenizer = sampler.tokenizer
     model = sampler.model
-    if ckpt_path := latest_checkpoint_path(ckpt_base_path):
+    if ckpt_path := lora.latest_checkpoint_path(ckpt_base_path):
         print(f"Loading LoRA checkpoint from {ckpt_path}")
-        model = load_lora(model, ckpt_path)
+        model = lora.load(model, ckpt_path)
         sampler.model = model
 
     optimizer = nnx.Optimizer(model, optax.sgd(1e-3), wrt=trainable)
@@ -166,123 +239,9 @@ def train(sampler: Sampler, trainset: Dataset, testset: Dataset, ckpt_base_path:
                 print(f"!!! Epoch {epoch}, step {step}: gen_metrics = {gen_metrics}")
                 ckpt_path = os.path.join(f"{ckpt_base_path}/{datetime.now().strftime('%Y-%m_%H-%M-%S')}.ckpt")
                 print(f"Saving LoRA checkpoint to {ckpt_path}")
-                save_lora(model, ckpt_path)
+                lora.save(model, ckpt_path)
             # print(f"==== memory at step {step}: {get_memory_gb()}")
 
-
-# ==============
-# Save/Load
-# ==============
-
-
-# TODO: move to lora module, adding arg filter = lora.ALL_LORA_PARAMS
-def save_lora(model, ckpt_path: str):
-    ckpt_path = os.path.abspath(ckpt_path)
-    checkpointer = ocp.StandardCheckpointer()
-    _graphdef, lora_state, _other_state = nnx.split(model, trainable, ...)
-    checkpointer.save(ckpt_path, lora_state)
-
-
-def load_lora(model, ckpt_path: str) -> Transformer:
-    ckpt_path = os.path.abspath(ckpt_path)
-    checkpointer = ocp.StandardCheckpointer()
-    graphdef, lora_state, other_state = nnx.split(model, trainable, ...)
-    loaded_state = checkpointer.restore(ckpt_path, lora_state)
-    del lora_state  # free memory; note that old model still references it
-    model = nnx.merge(graphdef, loaded_state, other_state)
-    return model
-
-
-def latest_checkpoint_path(ckpt_base_path: str):
-    if not os.path.exists(ckpt_base_path):
-        return None
-    filenames = os.listdir(ckpt_base_path)
-    if len(filenames) == 0:
-        return None
-    latest = sorted(filenames)[-1]
-    return os.path.join(ckpt_base_path, latest)
-
-
-# ===============
-# Visualization
-# ===============
-
-COLORS = [
-    "\033[95m",
-    "\033[94m",
-    "\033[96m",
-    "\033[92m",
-    "\033[93m",
-    "\033[91m",
-]
-ENDC = "\033[0m"
-
-
-def show_batch(sampler: Sampler, batch):
-    for i in range(len(batch["image_path"])):
-        image_path, markdown, question, answer = (
-            batch["image_path"][i],
-            batch["markdown"][i],
-            batch["question"][i],
-            batch["evidence"][i],
-        )
-        image = Image.open(image_path).resize(IMG_SHAPE)
-        out = sampler.sample(
-            PROMPT_TEMPLATE.format(question=question, markdown=markdown), images=[image]
-        )
-        color = COLORS[i % len(COLORS)]
-        print(
-            f"""\n{color}-------------- example {i} -------------
-            EXPECTED: {answer}
-            ACTUAL: {out}{ENDC}
-            """
-        )
-
-
-def calc_gen_metrics(sampler: Sampler, testset) -> dict[str, float]:
-    from tqdm import tqdm
-
-    metrics = []
-    answers = []
-    output = []
-    testset = testset.select(range(10))  # hack for faster metric calculation
-    for batch in tqdm(
-        testset.iter(batch_size=BATCH_SIZE), total=len(testset) // BATCH_SIZE
-    ):
-        for i in range(len(batch["image_path"])):
-            image_path, markdown, question, answer = (
-                batch["image_path"][i],
-                batch["markdown"][i],
-                batch["question"][i],
-                batch["evidence"][i],
-            )
-            image = Image.open(image_path).resize(IMG_SHAPE)
-            out = sampler.sample(
-                PROMPT_TEMPLATE.format(question=question, markdown=markdown),
-                images=[image],
-            )
-            ans_tokens = sampler.tokenizer.encode(answer)
-            out_tokens = sampler.tokenizer.encode(out)
-            # print("-" * 20 + f" {i:03} " + "-" * 20)
-            # print("ROUGE-1:", rouge_n(ans_tokens, out_tokens, n=1))
-            # print("ROUGE-2:", rouge_n(ans_tokens, out_tokens, n=2))
-            # print("ROUGE-3:", rouge_n(ans_tokens, out_tokens, n=3))
-            # print("ROUGE-L:", rouge_l(ans_tokens, out_tokens))
-            # print(f"""EXPECTED: {answer[:100]}\nACTUAL: {out[:100]}""")
-            # usign ROUGE-L as the main metric
-            metrics.append(rouge_l(ans_tokens, out_tokens))
-            answers.append(answer)
-            output.append(out)
-    avg_metrics = {
-        "precision": sum([m["precision"] for m in metrics]) / len(testset),
-        "recall": sum([m["recall"] for m in metrics]) / len(testset),
-        "f1": sum([m["f1"] for m in metrics]) / len(testset),
-    }
-    details = {
-        "answers": answers,
-        "output": output,
-    }
-    return avg_metrics, details
 
 
 # ===========
@@ -326,21 +285,9 @@ def main(ckpt_base_path: str = "output/vqa_lora"):
 
     mesh = jax.make_mesh((1, len(jax.devices())), ("data", "model"))
     sampler = Sampler.load_model("gemma-3-4b-it", mesh=mesh)
-    model = sampler.model
-    model.vision_encoder.rngs = nnx.Rngs(0)  # hack to work around NNX <> Linen interop
+    sampler.model.vision_encoder.rngs = nnx.Rngs(0)  # hack around NNX <> Linen interop
 
-    mesh = jax.make_mesh((1, len(jax.devices())), ("data", "model"))
     lora_sharding = NamedSharding(mesh, P())
-    lora.apply(model, rank=64, sharding=lora_sharding, rngs=nnx.Rngs(0))
+    lora.apply(sampler.model, rank=64, sharding=lora_sharding, rngs=nnx.Rngs(0))
 
     train(sampler, trainset, testset, ckpt_base_path)
-    # save_lora(sampler.model, ckpt_path)
-
-
-    # check output after training
-    # now it should follow the format in the training set
-    # sampler.model = load_lora(sampler.model, ckpt_path)
-    # show_metrics(sampler, next(testset.iter(8)))
-
-
-# main(training=True)

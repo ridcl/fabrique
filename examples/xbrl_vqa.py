@@ -14,6 +14,7 @@ from PIL import Image
 from fabrique import lora
 from fabrique.sampling import Sampler
 from fabrique.tokenizer_utils import encode_batch_for_prompt_completion
+from fabrique.export import to_huggingface
 from examples.rouge import rouge_n, rouge_l
 
 # from fabrique.training import TrainIterator
@@ -50,6 +51,9 @@ def show_batch(sampler: Sampler, batch):
         print(
             f"""\n{color}-------------- example {i} -------------
             EXPECTED: {answer}
+
+            <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
             ACTUAL: {out}{ENDC}
             """
         )
@@ -291,3 +295,26 @@ def main(ckpt_base_path: str = "output/vqa_lora"):
     lora.apply(sampler.model, rank=64, sharding=lora_sharding, rngs=nnx.Rngs(0))
 
     train(sampler, trainset, testset, ckpt_base_path)
+    lora.merge(sampler.model)
+    to_huggingface(sampler.model, "google/gemma-3-4b-it", "output/gemma-3-4b-audit-vqa")
+
+
+    from vllm import LLM
+    llm = LLM(model="output/gemma-3-4b-audit-vqa")
+    batch = next(testset.iter(batch_size=1))
+    image_path, markdown, question, answer = (
+        batch["image_path"][0],
+        batch["markdown"][0],
+        batch["question"][0],
+        batch["evidence"][0],
+    )
+    image = Image.open(image_path)
+    out = llm.chat([
+        {"role": "user", "content": [
+            {"type": "text", "text": "Given a page image and its <MARKDOWN>, extract evidence for the <QUESTION>"},
+            {"type": "image_pil", "image_pil": image},
+            {"type": "text", "text": f"<MARKDOWN>{markdown}</MARKDOWN>" +
+                f"<QUESTION>{question}</QUESTION>"}
+            ]
+         }])
+    out[0].outputs[0].text

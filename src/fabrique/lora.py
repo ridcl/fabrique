@@ -162,19 +162,57 @@ def apply(
         setattr(module, attr_name, lora_module)
 
 
-def merge(root: nnx.Module):
-    raise NotImplementedError("Merging LoRA parameters is not implemented yet")
-    # for path, module in root.iter_modules():
-    #     for attr_name, child in module.iter_children():
-    #         # if child passes filter and is not LoRA module yet
-    #         if LORA_MODULE(path, child):
-    #             base_module, adapter = child.base_module, child.adapter
-    #             # TODO: this doesn't work for Einsum. Instead, we
-    #             # need smth like (assuming lora_einsum_str = 'BTD,Dr,rNH->BTNH')
-    #             # adapter_kernel = jnp.einsum("Dr,rNH->NDH")
-    #             # base_module.kernel += adapter.lora_a @ adapter.lora_b
-    #             setattr(module, attr_name, base_module)
 
+def _merge_lora_einsum_inplace(lora_einsum: LoRAEinsum) -> None:
+    """Merge LoRA weights into the base module in-place and remove adapter.
+
+    This modifies the base_module kernel directly and sets adapter weights to zero.
+    """
+    # Get the LoRA matrices
+    lora_a = lora_einsum.adapter.lora_a.value
+    lora_b = lora_einsum.adapter.lora_b.value
+
+    # Parse einsum strings to build merge contraction
+    adapter_einsum = lora_einsum.adapter.lora_einsum_str
+    parts = adapter_einsum.split('->')
+    left_parts = parts[0].split(',')
+
+    a_indices = left_parts[1]
+    b_indices = left_parts[2]
+
+    original_einsum = lora_einsum.base_module.einsum_str
+    weight_indices = original_einsum.split(',')[1].split('->')[0]
+
+    merge_einsum_str = f'{a_indices},{b_indices}->{weight_indices}'
+
+    # Compute delta and merge
+    delta_weights = jnp.einsum(merge_einsum_str, lora_a, lora_b)
+    merged_kernel = lora_einsum.base_module.kernel.value + delta_weights
+
+    # Update base module kernel
+    lora_einsum.base_module.kernel.value = merged_kernel
+
+    # Zero out LoRA weights (optional, to indicate they're merged)
+    lora_einsum.adapter.lora_a.value = jnp.zeros_like(lora_a)
+    lora_einsum.adapter.lora_b.value = jnp.zeros_like(lora_b)
+
+
+def merge(root: nnx.Module):
+    for path, module in root.iter_modules():
+        for attr_name, child in module.iter_children():
+            # if child passes filter and is not LoRA-free yet
+            if LORA_MODULE(path, child):
+                if isinstance(child.base_module, nnx.Einsum):
+                    _merge_lora_einsum_inplace(child)
+                    setattr(module, attr_name, child.base_module)
+                else:
+                    # for linear, should be as easy as:
+                    # base_module.kernel += adapter.lora_a @ adapter.lora_b
+                    # but I don't have a good test case at the moment
+                    raise NotImplementedError(f"merge() is not implemented for module of type {type(child)}")
+
+
+# TODO: test merge, move both tests to `tests/`
 
 
 # =======================

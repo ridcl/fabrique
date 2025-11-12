@@ -16,8 +16,17 @@
 		"HF_TOKEN": "${localEnv:HF_TOKEN_PERSONAL}",
 		"JAX_COMPILATION_CACHE_DIR": "/tmp/jax_cache",
 		"XLA_PYTHON_CLIENT_MEM_FRACTION": ".99",
-		"TF_GPU_ALLOCATOR": "cuda_malloc_async"
+		"TF_GPU_ALLOCATOR": "cuda_malloc_async",  // mitigates fragmentation
+		"XLA_FLAGS": "--xla_gpu_enable_command_buffer="
 	},
+
+	"customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python"
+            ]
+        }
+    },
 
 	"postCreateCommand": "bash .devcontainer/init.sh",
 

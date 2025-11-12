@@ -231,7 +231,7 @@ def main(training=False, ckpt_path: str = "output/vlm-xbrl-lora.ckpt"):
         batch = next(trainset.iter(batch_size=8))
         show_batch(sampler, batch)
 
-        training(sampler, trainset)
+        train(sampler, trainset)
         save_lora(sampler.model, ckpt_path)
     else:
         sampler.model = load_lora(sampler.model, ckpt_path)

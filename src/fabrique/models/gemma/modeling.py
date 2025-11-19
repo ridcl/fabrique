@@ -52,7 +52,7 @@ class Transformer(nnx.Module):
             rngs=rngs,
         )
 
-        self.blocks = [
+        self.blocks = nnx.List([
             Block(
                 num_heads=self.config.num_heads,
                 num_kv_heads=self.config.num_kv_heads,
@@ -81,7 +81,7 @@ class Transformer(nnx.Module):
                 rngs=rngs,
             )
             for attn_type in self.config.attention_types
-        ]
+        ])
         self.final_norm = GemmaRMSNorm(
             config.embed_dim, param_dtype=param_dtype, rngs=rngs
         )

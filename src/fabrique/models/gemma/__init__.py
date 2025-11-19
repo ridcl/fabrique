@@ -68,6 +68,8 @@ def load_gemma_with_sharding(variant: str, *, mesh: jax.sharding.Mesh | None = N
 
 
 def load_gemma(variant: str, *, mesh: jax.sharding.Mesh | None = None):
+    if mesh is None:
+        mesh = jax.make_mesh((1, jax.device_count()), ("data", "model"))
     if variant not in GEMMA_MODEL_MAP:
         available_variants_str = "\n".join(f" - {v}" for v in GEMMA_MODEL_MAP.keys())
         raise ValueError(
@@ -75,9 +77,10 @@ def load_gemma(variant: str, *, mesh: jax.sharding.Mesh | None = None):
         )
     config, ckpt = GEMMA_MODEL_MAP[variant]
     param_dtype = jnp.bfloat16
-    model = nnx.eval_shape(
-        lambda: Transformer(config, param_dtype=param_dtype, rngs=nnx.Rngs(0))
-    )
+    with jax.set_mesh(mesh):
+        model = nnx.eval_shape(
+            lambda: Transformer(config, param_dtype=param_dtype, rngs=nnx.Rngs(0))
+        )
     params = gm.ckpts.load_params(ckpt)
     update_module_from_params(model, RULES, params, mesh=mesh)
     # model.vision_encoder.rngs = nnx.Rngs(0)  # otherwise rngs will be abstract array

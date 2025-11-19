@@ -145,5 +145,5 @@ def test_sampler_class(sampler):
         pad_to_multiple_of=512,
         rngs=rngs,
     )
-    target = "Here's a description of the image:\n\nThe image showcases a vibrant red robin perched on a weathered branch. The bird's plumage displays a beautiful mix of orange, gray, and white feathers, with a distinctive red breast. It has a dark, alert eye and a pointed beak, and the soft lighting highlights its fluffy appearance against the blurred background of twigs and branches."
+    target = "Here's a description of the image:\n\nThe photo showcases a vibrant red robin perched on a gray branch. It has a distinctive orange breast and belly, contrasted by gray feathers on its head and back. The robin's black eye is prominently visible, and it appears to be looking directly at the camera, creating a captivating close-up portrait of this charming bird."
     assert similar_texts(completion, target)

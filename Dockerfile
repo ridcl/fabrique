@@ -103,7 +103,7 @@ RUN uv lock && uv sync --active
 WORKDIR /home/${USERNAME}
 
 # Install specific variation of JAX, but don't add to prooject dependencies
-RUN uv pip install jax[cuda]==0.7.0
+RUN uv pip install jax[cuda]==0.8.1
 
 
 ###########################################################

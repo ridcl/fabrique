@@ -1,8 +1,9 @@
 from collections.abc import Sequence
 from functools import partial
-from flax import nnx
+import numpy as np
 import jax
 from jax import numpy as jnp
+from flax import nnx
 
 # test imports
 
@@ -11,6 +12,24 @@ from fabrique.loading import update_module_from_params
 from fabrique.loading import LoadRule as R
 
 
+def _posemb_sincos_2d(
+    h: int,
+    w: int,
+    *,
+    width: int,
+    temperature: float = 10_000.0,
+    dtype: jnp.dtype = jnp.float32,
+) -> jax.Array:
+    """Follows the MoCo v3 logic."""
+    y, x = jnp.mgrid[:h, :w]
+
+    assert width % 4 == 0, "Width must be mult of 4 for sincos posemb"
+    omega = jnp.arange(width // 4) / (width // 4 - 1)
+    omega = 1.0 / (temperature**omega)
+    y = jnp.einsum("m,d->md", y.flatten(), omega)
+    x = jnp.einsum("m,d->md", x.flatten(), omega)
+    pe = jnp.concatenate([jnp.sin(x), jnp.cos(x), jnp.sin(y), jnp.cos(y)], axis=1)
+    return jnp.asarray(pe, dtype)[None, :, :]
 
 
 class MlpBlock(nnx.Module):
@@ -366,101 +385,177 @@ def test_encoder():
     assert jnp.allclose(out_nn, out)
 
 
-# class ViTModel(nn.Module):
-#   """ViT model.
+class ViTModel(nnx.Module):
+    # TODO: update docstring
+    """ViT model.
 
-#   Attributes:
-#     compression_type: The compression type.
-#     width: The model dimension of the vision encoder.
-#     mlp_dim: The hidden dimension in the ffw layers.
-#     num_heads: The number of the heads.
-#     depth: The number of the layers.
-#     patch_size: The size to patchify images.
-#     posemb: The position embedding type.
-#     dropout: The dropout rate.
-#     scan: Whether to scan the layers (layer stacking).
-#     remat_policy: The remat policy.
-#     dtype_mm: The dtype to convert the input to.
-#     output_length: Number of soft tokens per image.
-#   """
+    Attributes:
+        compression_type: The compression type.
+        width: The model dimension of the vision encoder.
+        mlp_dim: The hidden dimension in the ffw layers.
+        num_heads: The number of the heads.
+        depth: The number of the layers.
+        patch_size: The size to patchify images.
+        posemb: The position embedding type.
+        dropout: The dropout rate.
+        remat_policy: The remat policy.
+        dtype_mm: The dtype to convert the input to.
+        output_length: Number of soft tokens per image.
+    """
 
-#   patch_size: Sequence[int] = (14, 14)
-#   width: int = 1152
-#   depth: int = 27
-#   mlp_dim: int | None = 4304  # Defaults to 4x input dim
-#   num_heads: int = 16
-#   posemb: str = "learn"  # Can also be "sincos2d"
-#   dropout: float = 0.0
-#   scan: bool = False
-#   # or "dots_with_no_batch_dims_saveable" for more speed (memory costly)
-#   remat_policy: str = "nothing_saveable"
-#   dtype_mm: str = "float32"
+    def __init__(
+        self,
+        patch_size: Sequence[int] = (14, 14),
+        in_channels: int = 3,
+        # The name 'width' is unclear to me, but it corresponds to the number
+        # of channels (image interpretation) or embedding dimension
+        # (transformer interpretation)
+        width: int = 1152,
+        depth: int = 27,   # Number of encoder blocks
+        mlp_dim: int | None = 4304,  # Defaults to 4x input dim
+        num_heads: int = 16,
+        posemb: str = "learn",  # Can also be "sincos2d"
+        dropout: float = 0.0,
+        scan: bool = False,
+        # or "dots_with_no_batch_dims_saveable" for more speed (memory costly)
+        remat_policy: str = "nothing_saveable",
+        dtype_mm: str = "float32",
+        *,
+        rngs: nnx.Rngs
+    ):
+        self.patch_size = patch_size
+        self.in_channels = in_channels
+        self.width = width
+        self.depth = depth
+        self.mlp_dim = mlp_dim
+        self.num_heads = num_heads
+        self.posemb = posemb
+        self.dropout = dropout
+        assert not scan, "scan() through layers is not supported"
+        self.remat_policy = remat_policy
+        self.dtype_mm = dtype_mm
 
-#   def _get_posemb(
-#       self,
-#       typ: str,
-#       *,
-#       seqshape: tuple[int, int],
-#       width: int,
-#       name: str,
-#       dtype: jnp.dtype = jnp.float32,
-#   ) -> typing.Float["B M D"]:
-#     """Returns the position embedding."""
-#     if typ == "learn":
-#       return self.param(
-#           name,
-#           nn.initializers.normal(stddev=1 / np.sqrt(width)),
-#           (1, np.prod(seqshape), width),
-#           dtype,
-#       )
-#     elif typ == "sincos2d":
-#       return _posemb_sincos_2d(*seqshape, width=width, dtype=dtype)
-#     else:
-#       raise ValueError(f"Unknown posemb type: {typ}")
+        self.conv = nnx.Conv(
+            self.in_channels,
+            self.width,
+            self.patch_size,
+            strides=self.patch_size,
+            padding="VALID",
+            dtype=self.dtype_mm,
+            rngs=rngs,
+        )
+        init_fn = nnx.initializers.normal(stddev=1 / np.sqrt(width))
+        # When using posemb == "learn", we must define embedding length
+        # in advance. Here we use (64, 64) which corresponds to the Gemma's
+        # default image size (896, 896) divided by patch size (14, 14).
+        # Maybe we need to move it to model parameter, but assuming pre-trained
+        # SigLip encoder, the use case for extra parameter is unclear.
+        seqshape = (64, 64)
+        self.pos_embedding = nnx.Param(
+            init_fn(rngs.params(), shape=(1, np.prod(seqshape), width), dtype=dtype_mm)
+        )
+        self.do = nnx.Dropout(rate=self.dropout)
+        self.encoder = Encoder(
+            depth=self.depth,
+            input_dim=self.width,
+            mlp_dim=self.mlp_dim,
+            num_heads=self.num_heads,
+            dropout=self.dropout,
+            remat_policy=self.remat_policy,
+            dtype_mm=self.dtype_mm,
+            rngs=rngs
+        )
 
-#   @nn.compact
-#   def __call__(
-#       self,
-#       image: typing.Float["B N P D"],
-#       *,
-#       train: bool = False,
-#   ):
-#     image = jnp.asarray(image, self.dtype_mm)
+    def _get_posemb(
+        self,
+        typ: str,
+        *,
+        seqshape: tuple[int, int],
+        width: int,
+        dtype: jnp.dtype = jnp.float32,
+    ) -> jax.Array:    # typing.Float["B M D"]:
+        """Returns the position embedding."""
+        if typ == "learn":
+            return self.pos_embedding
+        elif typ == "sincos2d":
+            return _posemb_sincos_2d(*seqshape, width=width, dtype=dtype)
+        else:
+            raise ValueError(f"Unknown posemb type: {typ}")
 
-#     # Patch extraction
-#     x = nn.Conv(
-#         self.width,
-#         self.patch_size,
-#         strides=self.patch_size,
-#         padding="VALID",
-#         name="embedding",
-#         dtype=self.dtype_mm,
-#     )(image)
+    def __call__(
+        self,
+        image: jax.Array,   # typing.Float["B N P D"],
+        *,
+        train: bool = False,
+    ):
+        # TODO: assert (image.shape == (896, 896) or self.posemb != "learn") - incompatible
+        image = jnp.asarray(image, self.dtype_mm)
+        # Patch extraction
+        x = self.conv(image)   # [bsz, n_patches, n_patches, width]
+        n, h, w, c = x.shape
+        x = jnp.reshape(x, [n, h * w, c])
+        # Add posemb before adding extra token.
+        x = x + self._get_posemb(
+            self.posemb,
+            seqshape=(h, w),
+            width=c,
+            dtype=x.dtype,
+        )
+        n, l, c = x.shape  # pylint: disable=unused-variable
+        x = self.do(x, deterministic=not train)
+        x = self.encoder(x, deterministic=not train)
+        return x
 
-#     n, h, w, c = x.shape
-#     x = jnp.reshape(x, [n, h * w, c])
 
-#     # Add posemb before adding extra token.
-#     x = x + self._get_posemb(
-#         self.posemb,
-#         seqshape=(h, w),
-#         width=c,
-#         name="pos_embedding",
-#         dtype=x.dtype,
-#     )
 
-#     n, l, c = x.shape  # pylint: disable=unused-variable
-#     x = nn.Dropout(rate=self.dropout)(x, not train)
+def test_vit_model():
+    batch_size = 2
+    h, w = 896, 896
+    in_channels = 3
+    depth = 6
+    input_dim = 24
+    mlp_dim = 4 * input_dim
+    rngs = nnx.Rngs(params=0, data=45, dropout=99)
+    x = jax.random.normal(rngs.data(), (batch_size, h, w, in_channels))
 
-#     x = Encoder(
-#         depth=self.depth,
-#         mlp_dim=self.mlp_dim,
-#         num_heads=self.num_heads,
-#         dropout=self.dropout,
-#         scan=self.scan,
-#         remat_policy=self.remat_policy,
-#         dtype_mm=self.dtype_mm,
-#         name="Transformer",
-#     )(x, deterministic=not train)
+    vit_nn = vu.ViTModel(depth=depth, mlp_dim=mlp_dim)
+    variables = vit_nn.init(rngs.params(), x)
+    vit = ViTModel(depth=depth, mlp_dim=mlp_dim, in_channels=in_channels, rngs=rngs)
 
-#     return x
+    rules = [
+        # encoder: block: attn
+        R("Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.query.kernel", "encoder.blocks.{n}.attn.query.kernel"),
+        R("Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.query.bias", "encoder.blocks.{n}.attn.query.bias"),
+        R("Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.key.kernel", "encoder.blocks.{n}.attn.key.kernel"),
+        R("Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.key.bias", "encoder.blocks.{n}.attn.key.bias"),
+        R("Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.value.kernel", "encoder.blocks.{n}.attn.value.kernel"),
+        R("Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.value.bias", "encoder.blocks.{n}.attn.value.bias"),
+        R("Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.out.kernel", "encoder.blocks.{n}.attn.out.kernel"),
+        R("Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.out.bias", "encoder.blocks.{n}.attn.out.bias"),
+        # encoder: block: mlp
+        R("Transformer.encoderblock_{n}.MlpBlock_0.Dense_0.kernel", "encoder.blocks.{n}.mlp.linear1.kernel"),
+        R("Transformer.encoderblock_{n}.MlpBlock_0.Dense_0.bias", "encoder.blocks.{n}.mlp.linear1.bias"),
+        R("Transformer.encoderblock_{n}.MlpBlock_0.Dense_1.kernel", "encoder.blocks.{n}.mlp.linear2.kernel"),
+        R("Transformer.encoderblock_{n}.MlpBlock_0.Dense_1.bias", "encoder.blocks.{n}.mlp.linear2.bias"),
+        # encoder: block: pre-attn norm
+        R("Transformer.encoderblock_{n}.LayerNorm_0.scale", "encoder.blocks.{n}.pre_attn_norm.scale"),
+        R("Transformer.encoderblock_{n}.LayerNorm_0.bias", "encoder.blocks.{n}.pre_attn_norm.bias"),
+        # encoder: block: post-attn norm
+        R("Transformer.encoderblock_{n}.LayerNorm_1.scale", "encoder.blocks.{n}.post_attn_norm.scale"),
+        R("Transformer.encoderblock_{n}.LayerNorm_1.bias", "encoder.blocks.{n}.post_attn_norm.bias"),
+        # encoder: norm
+        R("Transformer.encoder_norm.scale", "encoder.norm.scale"),
+        R("Transformer.encoder_norm.bias", "encoder.norm.bias"),
+
+        # conv
+        R("embedding.kernel", "conv.kernel"),
+        R("embedding.bias", "conv.bias"),
+
+        # pos embedding
+        R("pos_embedding", "pos_embedding"),
+    ]
+    update_module_from_params(vit, rules, variables["params"])
+
+    out_nn = vit_nn.apply(variables, x)
+    out = vit(x)
+    assert jnp.allclose(out_nn, out, atol=1e-2)

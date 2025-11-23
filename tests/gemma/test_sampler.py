@@ -88,7 +88,7 @@ def test_text_only_batch(sampler):
     )
     completions = [tokenizer.decode(t) for t in out_tokens]
     targets = [
-        "A humble, wooden seat,\nSupporting weary, tired feet,\nSilence in its wait. \n\nSimple, strong, and true,\nA grounding point for you,\nJust a stool, for few.<end_of_turn>",
+        "A simple, sturdy form,\nHolding weight with quiet grace,\nBeneath a weary form. \n\nJust wood, or metal cold,\nA brief support, then released,\nA silent, humble role.<end_of_turn>",
         "John Snow was a 19th-century English anesthesiologist and physician who is best known for his pioneering work in antiseptic surgery and for documenting the first modern outbreak of cholera in London.<end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn><end_of_turn>",
     ]
     assert similar_texts(completions[0], targets[0])

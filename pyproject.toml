@@ -33,3 +33,10 @@ extra = [
 
 [tool.uv]
 default-groups = ["dev", "extra"]
+
+# We depend on Gemma, Gemma depends on Kauldron, Kauldron depends on sqlalchemy <= 1.4.0,
+# which creates unnecessary restriction for downstream packages. We don't really use
+# SQLAlchemy directly or indirectly, thus, we remove the restriction on old version
+override-dependencies = [
+    "sqlalchemy>=1.4.0",
+]

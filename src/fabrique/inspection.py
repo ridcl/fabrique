@@ -6,7 +6,7 @@ def summary_size(obj):
     if isinstance(obj, nnx.Module):
         obj = nnx.split(obj)[1]
     elif isinstance(obj, nnx.graph.Static):
-        obj = obj.value
+        obj = obj.get_value()
     return sum(x.nbytes for x in jax.tree.leaves(obj))
 
 
@@ -42,7 +42,7 @@ def print_size(params):
         if isinstance(obj, jax.Array) or isinstance(obj, nnx.Variable):
             print(f"{indent_str}{name} : {summary_size_str(obj)}")
         elif isinstance(obj, nnx.graph.Static):
-            print(f"{indent_str}{name} : {summary_size_str(obj.value)}")
+            print(f"{indent_str}{name} : {summary_size_str(obj.get_value())}")
         elif isinstance(obj, nnx.VariableState):
             print_obj(name, obj.value, indent)
         elif isinstance(obj, list):

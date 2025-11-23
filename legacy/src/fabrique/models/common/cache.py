@@ -23,7 +23,7 @@ def concatenate_to_cache(
     states from previous steps.
     """
     *bs, q_len, _, _ = xq.shape
-    *_, max_length, _, _ = cache_k.value.shape
+    *_, max_length, _, _ = cache_k.shape
 
     # update values in cache
     indices = (0,) * len(bs) + (start_pos, 0, 0)

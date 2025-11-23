@@ -7,7 +7,7 @@
 	},
 
 	"mounts": [
-		"source=${localEnv:HOME}/.cache/huggingface/,target=/home/devpod/.cache/huggingface/,type=bind,consistency=cached",
+		"source=${localEnv:HOME}/.cache/,target=/home/devpod/.cache/,type=bind,consistency=cached",
 		"source=${localEnv:HOME}/data/,target=/data/,type=bind,consistency=cached"
 	],
 

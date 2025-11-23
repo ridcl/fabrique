@@ -1,3 +1,6 @@
+import os
+os.environ['XLA_FLAGS'] = '--xla_force_host_platform_device_count=1'
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -19,6 +22,11 @@ from fabrique.models.gemma.modules import (
     GemmaRMSNorm,
     LayerCache,
 )
+
+
+@pytest.fixture
+def auto_mesh():
+    return jax.make_mesh((1, 1), ("data", "model"))
 
 
 def test_embedder():
@@ -113,6 +121,7 @@ GLOBAL_ATTN_KW = {"attn_type": AttentionType.GLOBAL}
     ],
 )
 def test_attention(
+    auto_mesh,
     batch_size: int,
     seq_len: int,
     cache_size: int,
@@ -148,7 +157,8 @@ def test_attention(
         attn_nn = _modules.Attention(**kw)
         variables = attn_nn.init(key, x, segment_pos, cache, attn_mask)
 
-    attn = Attention(**kw, param_dtype=dtype, rngs=rngs)
+    with jax.set_mesh(auto_mesh):
+        attn = Attention(**kw, param_dtype=dtype, rngs=rngs)
     rules = [
         R("attn_vec_einsum.w", "attn_vec_einsum.kernel"),
         R("qkv_einsum.w", "qkv_einsum.kernel"),
@@ -196,7 +206,7 @@ def test_attention(
         (False, jnp.bfloat16),
     ],
 )
-def test_feedforward(transpose_gating_einsum: bool, dtype):
+def test_feedforward(auto_mesh, transpose_gating_einsum: bool, dtype):
     rngs = nnx.Rngs(params=14)
     batch_size = 1
     seq_len = 5
@@ -207,10 +217,10 @@ def test_feedforward(transpose_gating_einsum: bool, dtype):
     with _dtype_params.initialize_param_with_dtype(dtype):
         ffw_nn = _modules.FeedForward(features, hidden_dim, transpose_gating_einsum)
         variables = ffw_nn.init(rngs.params(), x)
-
-    ffw = FeedForward(
-        features, hidden_dim, transpose_gating_einsum, param_dtype=dtype, rngs=rngs
-    )
+    with jax.set_mesh(auto_mesh):
+        ffw = FeedForward(
+            features, hidden_dim, transpose_gating_einsum, param_dtype=dtype, rngs=rngs
+        )
     rules = [
         R("gating_einsum", "gating.kernel"),
         R("linear", "linear.kernel"),
@@ -253,7 +263,7 @@ def test_norm():
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.bfloat16])
-def test_block(dtype: jax.typing.DTypeLike):
+def test_block(auto_mesh, dtype: jax.typing.DTypeLike):
     rngs = nnx.Rngs(params=101)
     key = rngs.params()
     batch_size = 2
@@ -287,8 +297,8 @@ def test_block(dtype: jax.typing.DTypeLike):
     with _dtype_params.initialize_param_with_dtype(dtype):
         block_nn = _modules.Block(**kw)
         variables = block_nn.init(key, x, segment_pos, cache, attn_mask)
-
-    block = Block(**kw, param_dtype=dtype, rngs=rngs)
+    with jax.set_mesh(auto_mesh):
+        block = Block(**kw, param_dtype=dtype, rngs=rngs)
     rules = [
         # attn
         R("attn.attn_vec_einsum.w", "attn.attn_vec_einsum.kernel"),
@@ -316,13 +326,14 @@ def test_block(dtype: jax.typing.DTypeLike):
         assert (new_cache_nn[p] == new_cache[p]).all()
 
 
-def test_transformer():
+def test_transformer(auto_mesh):
     rngs = nnx.Rngs(params=116)
     param_dtype = jnp.bfloat16
     config = gm.nn.Gemma3_4B.config
-    model = nnx.eval_shape(
-        lambda: Transformer(config, param_dtype=param_dtype, rngs=nnx.Rngs(0))
-    )
+    with jax.set_mesh(auto_mesh):
+        model = nnx.eval_shape(
+            lambda: Transformer(config, param_dtype=param_dtype, rngs=nnx.Rngs(0))
+        )
     model_nn = _transformer.Transformer(config=config)
     params = gm.ckpts.load_params(gm.ckpts.CheckpointPath.GEMMA3_4B_IT)
 
@@ -335,7 +346,6 @@ def test_transformer():
     )
 
     update_module_from_params(model, RULES, params)
-    model.vision_encoder.rngs = rngs  # otherwise rngs will be abstract array
 
     out_nn = model_nn.apply({"params": params}, tokens=tokens, images=images)
     out = model(tokens=tokens, images=images)

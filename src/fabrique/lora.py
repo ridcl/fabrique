@@ -169,8 +169,8 @@ def _merge_lora_einsum_inplace(lora_einsum: LoRAEinsum) -> None:
     This modifies the base_module kernel directly and sets adapter weights to zero.
     """
     # Get the LoRA matrices
-    lora_a = lora_einsum.adapter.lora_a.value
-    lora_b = lora_einsum.adapter.lora_b.value
+    lora_a = lora_einsum.adapter.lora_a
+    lora_b = lora_einsum.adapter.lora_b
 
     # Parse einsum strings to build merge contraction
     adapter_einsum = lora_einsum.adapter.lora_einsum_str
@@ -187,14 +187,14 @@ def _merge_lora_einsum_inplace(lora_einsum: LoRAEinsum) -> None:
 
     # Compute delta and merge
     delta_weights = jnp.einsum(merge_einsum_str, lora_a, lora_b)
-    merged_kernel = lora_einsum.base_module.kernel.value + delta_weights
+    merged_kernel = lora_einsum.base_module.kernel + delta_weights
 
     # Update base module kernel
-    lora_einsum.base_module.kernel.value = merged_kernel
+    lora_einsum.base_module.kernel = merged_kernel
 
     # Zero out LoRA weights (optional, to indicate they're merged)
-    lora_einsum.adapter.lora_a.value = jnp.zeros_like(lora_a)
-    lora_einsum.adapter.lora_b.value = jnp.zeros_like(lora_b)
+    lora_einsum.adapter.lora_a = jnp.zeros_like(lora_a)
+    lora_einsum.adapter.lora_b = jnp.zeros_like(lora_b)
 
 
 def merge(root: nnx.Module):

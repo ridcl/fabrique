@@ -148,7 +148,7 @@ def set_nested_attr(nested_obj, fields: List[str], val):
 
 
 def cache_layout(model, layer_id=0):
-    x = model.layers[layer_id].attention.cache_k.value
+    x = model.layers[layer_id].attention.cache_k
     flags = x.sum(axis=2)[0, :, 0] != 0
     return flags.astype(int)
 

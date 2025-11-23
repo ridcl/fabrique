@@ -9,19 +9,19 @@ def test__merge_lora_einsum_inplace():
     einsum = nnx.Einsum("AB,BC->AC", kernel_shape=(10, 20), rngs=rngs)
     lora_einsum = lora.LoRAEinsum(5, einsum, rngs=rngs)
     # make lora_b also non-zero for this test
-    lora_einsum.adapter.lora_b.value = jax.random.normal(rngs(), lora_einsum.adapter.lora_b.shape)
+    lora_einsum.adapter.lora_b = jax.random.normal(rngs(), lora_einsum.adapter.lora_b.shape)
     X = jax.random.normal(rngs(), (2, 10))
     before_merge = lora_einsum(X)
     lora._merge_lora_einsum_inplace(lora_einsum)
     after_merge = lora_einsum(X)
     assert jnp.allclose(before_merge, after_merge, atol=1e-2)
-    assert jnp.all(lora_einsum.adapter.lora_a.value == 0)
-    assert jnp.all(lora_einsum.adapter.lora_b.value == 0)
+    assert jnp.all(lora_einsum.adapter.lora_a == 0)
+    assert jnp.all(lora_einsum.adapter.lora_b == 0)
 
 
 def test_apply_merge():
     from fabrique.loading import load_model
-    rngs = nnx.Rngs(87)
+    rngs = nnx.Rngs(89)
     x = jnp.arange(10)[None, :]
     _, model = load_model("gemma-3-1b-it")
     q_einsum_orig = model.blocks[4].attn.q_einsum
@@ -36,7 +36,7 @@ def test_apply_merge():
     assert jnp.all(out_orig.logits == out_lora.logits)
 
     # make non-zero
-    q_einsum_lora.adapter.lora_b.value = jax.random.normal(rngs(), q_einsum_lora.adapter.lora_b.shape)
+    q_einsum_lora.adapter.lora_b = jax.random.normal(rngs(), q_einsum_lora.adapter.lora_b.shape)
     out_lora_new = model(x)
 
     lora.merge(model)

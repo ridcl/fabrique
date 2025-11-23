@@ -131,12 +131,12 @@ class Attention(nnx.Module):
         xk = xk.reshape(bsz, seq_len, self.n_kv_heads, self.head_dim)
         xv = xv.reshape(bsz, seq_len, self.n_kv_heads, self.head_dim)
 
-        xq, xk = apply_rotary_pos_emb(xq, xk, self.sincos.value, start_pos)
+        xq, xk = apply_rotary_pos_emb(xq, xk, self.sincos, start_pos)
 
         # apply masks. note: masks have shape (bsz, q_len, kv_len)
         # kv_len depends on the use of cache - see its definition above
         mask = jax.lax.dynamic_slice(
-            self.full_causal_mask.value, (0, start_pos, 0), (1, q_len, kv_len)
+            self.full_causal_mask, (0, start_pos, 0), (1, q_len, kv_len)
         )
         mask = jnp.broadcast_to(mask, (bsz, *mask.shape[1:]))
         if padding_mask is not None:

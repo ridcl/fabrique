@@ -1,11 +1,11 @@
 [project]
 name = "fabrique"
-version = "0.2.1"
+version = "0.3.0"
 description = "Foundation for modern ML research"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "flax==0.11.0",   # fix to 0.11.0, because 0.12.x is not compatible yet
+    "flax>=0.12.0",
     "gemma>=3.1.0",
     "huggingface-hub>=0.33.4",
     "jinja2>=3.1.6",
@@ -33,3 +33,10 @@ extra = [
 
 [tool.uv]
 default-groups = ["dev", "extra"]
+
+# We depend on Gemma, Gemma depends on Kauldron, Kauldron depends on sqlalchemy <= 1.4.0,
+# which creates unnecessary restriction for downstream packages. We don't really use
+# SQLAlchemy directly or indirectly, thus, we remove the restriction on old version
+override-dependencies = [
+    "sqlalchemy>=1.4.0",
+]

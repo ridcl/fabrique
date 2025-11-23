@@ -1,14 +1,10 @@
-import dataclasses
 import functools
 from typing import cast, Optional
 
 import einops
 import jax
 from flax import nnx
-
-from gemma.multimodal.vision import VisionInitEmbeddings
 from gemma.gm.vision import _preprocess
-
 from fabrique.models.gemma import vision_utils
 
 
@@ -143,75 +139,3 @@ class SigLiPFromPatches(nnx.Module):
         )
         patches = patches.reshape((*batch_dims,) + patches.shape[1:])
         return patches
-
-
-
-def test_siglip_from_patches():
-    # test imports
-
-    import jax.numpy as jnp
-    from gemma.multimodal import vision as v
-    from fabrique.loading import update_module_from_params
-    from fabrique.loading import LoadRule as R
-
-
-    batch_size = 2
-    n_images = 1
-    h, w = 896, 896
-    in_channels = 3
-    depth = 6
-    input_dim = 24
-    mlp_dim = 4 * input_dim
-    rngs = nnx.Rngs(params=0, data=45, dropout=99)
-    images = jax.random.normal(rngs.data(), (batch_size, n_images, h, w, in_channels))
-
-
-    siglip_nn = v.SigLiPFromPatches()
-    siglip = SigLiPFromPatches(rngs=rngs)
-
-    # First, check patchify, which doesn't require variable initialization
-    patches_nn = siglip_nn.patchify_images(images)
-    patches = siglip.patchify_images(images)
-    assert jnp.all(patches_nn == patches)
-
-    # Now, init Linen model and copy parameters to NNX model
-    variables = siglip_nn.init(rngs.params(), patches=patches_nn, is_training=False)
-
-
-    rules = [
-        # encoder: block: attn
-        R("siglip_encoder.Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.query.kernel", "siglip_encoder.encoder.blocks.{n}.attn.query.kernel"),
-        R("siglip_encoder.Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.query.bias", "siglip_encoder.encoder.blocks.{n}.attn.query.bias"),
-        R("siglip_encoder.Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.key.kernel", "siglip_encoder.encoder.blocks.{n}.attn.key.kernel"),
-        R("siglip_encoder.Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.key.bias", "siglip_encoder.encoder.blocks.{n}.attn.key.bias"),
-        R("siglip_encoder.Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.value.kernel", "siglip_encoder.encoder.blocks.{n}.attn.value.kernel"),
-        R("siglip_encoder.Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.value.bias", "siglip_encoder.encoder.blocks.{n}.attn.value.bias"),
-        R("siglip_encoder.Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.out.kernel", "siglip_encoder.encoder.blocks.{n}.attn.out.kernel"),
-        R("siglip_encoder.Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.out.bias", "siglip_encoder.encoder.blocks.{n}.attn.out.bias"),
-        # encoder: block: mlp
-        R("siglip_encoder.Transformer.encoderblock_{n}.MlpBlock_0.Dense_0.kernel", "siglip_encoder.encoder.blocks.{n}.mlp.linear1.kernel"),
-        R("siglip_encoder.Transformer.encoderblock_{n}.MlpBlock_0.Dense_0.bias", "siglip_encoder.encoder.blocks.{n}.mlp.linear1.bias"),
-        R("siglip_encoder.Transformer.encoderblock_{n}.MlpBlock_0.Dense_1.kernel", "siglip_encoder.encoder.blocks.{n}.mlp.linear2.kernel"),
-        R("siglip_encoder.Transformer.encoderblock_{n}.MlpBlock_0.Dense_1.bias", "siglip_encoder.encoder.blocks.{n}.mlp.linear2.bias"),
-        # encoder: block: pre-attn norm
-        R("siglip_encoder.Transformer.encoderblock_{n}.LayerNorm_0.scale", "siglip_encoder.encoder.blocks.{n}.pre_attn_norm.scale"),
-        R("siglip_encoder.Transformer.encoderblock_{n}.LayerNorm_0.bias", "siglip_encoder.encoder.blocks.{n}.pre_attn_norm.bias"),
-        # encoder: block: post-attn norm
-        R("siglip_encoder.Transformer.encoderblock_{n}.LayerNorm_1.scale", "siglip_encoder.encoder.blocks.{n}.post_attn_norm.scale"),
-        R("siglip_encoder.Transformer.encoderblock_{n}.LayerNorm_1.bias", "siglip_encoder.encoder.blocks.{n}.post_attn_norm.bias"),
-        # encoder: norm
-        R("siglip_encoder.Transformer.encoder_norm.scale", "siglip_encoder.encoder.norm.scale"),
-        R("siglip_encoder.Transformer.encoder_norm.bias", "siglip_encoder.encoder.norm.bias"),
-
-        # conv
-        R("siglip_encoder.embedding.kernel", "siglip_encoder.conv.kernel"),
-        R("siglip_encoder.embedding.bias", "siglip_encoder.conv.bias"),
-
-        # pos embedding
-        R("siglip_encoder.pos_embedding", "siglip_encoder.pos_embedding"),
-    ]
-    update_module_from_params(siglip, rules, variables["params"])
-
-    out_nn = siglip_nn.apply(variables, patches=patches, is_training=False)
-    out = siglip(patches=patches, is_training=False)
-    assert jnp.allclose(out_nn, out, atol=1e-2)

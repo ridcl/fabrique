@@ -15,6 +15,7 @@ from gemma.multimodal import vision as gemma_vision
 
 from fabrique.models.gemma.layers import GemmaRMSNorm
 from fabrique.models.gemma.modules import Block, Embedder
+from fabrique.models.gemma.vision import SigLiPFromPatches
 
 
 class Transformer(nnx.Module):
@@ -85,29 +86,30 @@ class Transformer(nnx.Module):
         self.final_norm = GemmaRMSNorm(
             config.embed_dim, param_dtype=param_dtype, rngs=rngs
         )
-        # note: we wrap vision encoder to NNX only on this level to keep
-        # using the original TransformerConfig class
-        self.vision_encoder = self._wrap_and_init_vision_encoder(
-            self.config.vision_encoder, rngs=rngs
-        )
+        # NOTE: TransformerConfig comes with original Linen vision encoder,
+        # but we replace it with our NNX implementation (or None, if text-only model)
+        if self.config.vision_encoder is not None:
+            self.vision_encoder = SigLiPFromPatches(rngs=rngs)
+        else:
+            self.vision_encoder = None
 
-    def _wrap_and_init_vision_encoder(
-        self, vision_encoder: gemma_vision.SigLiPFromPatches | None, rngs: nnx.Rngs
-    ) -> bridge.ToNNX:
-        if vision_encoder is None:
-            return None
-        wrapped = bridge.ToNNX(vision_encoder, rngs=rngs)
+    # def _wrap_and_init_vision_encoder(
+    #     self, vision_encoder: gemma_vision.SigLiPFromPatches | None, rngs: nnx.Rngs
+    # ) -> bridge.ToNNX:
+    #     if vision_encoder is None:
+    #         return None
+    #     wrapped = bridge.ToNNX(vision_encoder, rngs=rngs)
 
-        num_patches_one_side = (
-            vision_encoder.image_height // vision_encoder.siglip_encoder.patch_size[0]
-        )
-        num_channels = 3 * vision_encoder.siglip_encoder.patch_size[0] ** 2
-        dummy_patches = jnp.ones(
-            (1, 1, num_patches_one_side**2, num_channels), dtype=jnp.uint8
-        )
-        # note: lazy_init() of vision encoder may take up to a few minutes
-        wrapped.lazy_init(patches=dummy_patches, is_training=False)
-        return wrapped
+    #     num_patches_one_side = (
+    #         vision_encoder.image_height // vision_encoder.siglip_encoder.patch_size[0]
+    #     )
+    #     num_channels = 3 * vision_encoder.siglip_encoder.patch_size[0] ** 2
+    #     dummy_patches = jnp.ones(
+    #         (1, 1, num_patches_one_side**2, num_channels), dtype=jnp.uint8
+    #     )
+    #     # note: lazy_init() of vision encoder may take up to a few minutes
+    #     wrapped.lazy_init(patches=dummy_patches, is_training=False)
+    #     return wrapped
 
     def __repr__(self):
         return "Transformer[Gemma](...)"
@@ -264,7 +266,7 @@ class Transformer(nnx.Module):
         elif self.vision_encoder is not None:
             # During initialization, call the vision encoder to ensure that the
             # params are correctly initialized.
-            _ = self._encode_vision(_make_dummy_images(self.vision_encoder.module))
+            _ = self._encode_vision(_make_dummy_images(self.vision_encoder))
 
         # Note: When `positions` and `attention_mask` are explicitly provided,
         # it's the user responsibility to correctly take into account the extra
@@ -308,7 +310,7 @@ class Transformer(nnx.Module):
         """Encode the images into the same space as the text embeddings."""
         assert self.vision_encoder is not None
         patches = self.vision_encoder.patchify_images(images)
-        soft_embeddings = self.vision_encoder(patches=patches, is_training=False)
+        soft_embeddings = self.vision_encoder(patches=patches)
         soft_embeddings = self.embedder.encode_vision(soft_embeddings)
         return soft_embeddings
 
@@ -324,7 +326,7 @@ class Transformer(nnx.Module):
 
 
 def _make_dummy_images(
-    vision_encoder: gemma_vision.SigLiPFromPatches,
+    vision_encoder: SigLiPFromPatches,
 ) -> jax.Array:  # Float['B L P D']
     """Make dummy images for initializing the vision encoder."""
     return jnp.zeros(

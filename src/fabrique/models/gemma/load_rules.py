@@ -10,23 +10,52 @@ RULES = [
     R("embedder.mm_soft_embedding_norm.scale", "embedder.mm_soft_embedding_norm.scale"),
     R("embedder.mm_input_projection.w", "embedder.mm_input_projection.kernel"),
 
-    # vision_encoder
-    R("vision_encoder.siglip_encoder.Transformer.encoder_norm.bias", "vision_encoder.siglip_encoder.Transformer.encoder_norm.bias"),
-    R("vision_encoder.siglip_encoder.Transformer.encoder_norm.scale", "vision_encoder.siglip_encoder.Transformer.encoder_norm.scale"),
-    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.LayerNorm_{j}.bias", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.LayerNorm_{j}.bias"),
-    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.LayerNorm_{j}.scale", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.LayerNorm_{j}.scale"),
-    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MlpBlock_{j}.Dense_{k}.bias", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MlpBlock_{j}.Dense_{k}.bias"),
-    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MlpBlock_{j}.Dense_{k}.kernel", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MlpBlock_{j}.Dense_{k}.kernel"),
-    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.query.bias", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.query.bias"),
-    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.query.kernel", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.query.kernel"),
-    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.key.bias", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.key.bias"),
-    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.key.kernel", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.key.kernel"),
-    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.value.bias", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.value.bias"),
-    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.value.kernel", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.value.kernel"),
-    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.out.bias", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.out.bias"),
-    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.out.kernel", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.out.kernel"),
-    R("vision_encoder.siglip_encoder.embedding.bias", "vision_encoder.siglip_encoder.embedding.bias"),
-    R("vision_encoder.siglip_encoder.embedding.kernel", "vision_encoder.siglip_encoder.embedding.kernel"),
+    # # vision_encoder (old Linen version)
+    # R("vision_encoder.siglip_encoder.Transformer.encoder_norm.bias", "vision_encoder.siglip_encoder.Transformer.encoder_norm.bias"),
+    # R("vision_encoder.siglip_encoder.Transformer.encoder_norm.scale", "vision_encoder.siglip_encoder.Transformer.encoder_norm.scale"),
+    # R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.LayerNorm_{j}.bias", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.LayerNorm_{j}.bias"),
+    # R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.LayerNorm_{j}.scale", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.LayerNorm_{j}.scale"),
+    # R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MlpBlock_{j}.Dense_{k}.bias", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MlpBlock_{j}.Dense_{k}.bias"),
+    # R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MlpBlock_{j}.Dense_{k}.kernel", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MlpBlock_{j}.Dense_{k}.kernel"),
+    # R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.query.bias", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.query.bias"),
+    # R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.query.kernel", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.query.kernel"),
+    # R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.key.bias", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.key.bias"),
+    # R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.key.kernel", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.key.kernel"),
+    # R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.value.bias", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.value.bias"),
+    # R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.value.kernel", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.value.kernel"),
+    # R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.out.bias", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.out.bias"),
+    # R("vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.out.kernel", "vision_encoder.siglip_encoder.Transformer.encoderblock_{i}.MultiHeadDotProductAttention_{j}.out.kernel"),
+    # R("vision_encoder.siglip_encoder.embedding.bias", "vision_encoder.siglip_encoder.embedding.bias"),
+    # R("vision_encoder.siglip_encoder.embedding.kernel", "vision_encoder.siglip_encoder.embedding.kernel"),
+    # R("vision_encoder.siglip_encoder.pos_embedding", "vision_encoder.siglip_encoder.pos_embedding"),
+
+    ## vision encoder
+    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.query.kernel", "vision_encoder.siglip_encoder.encoder.blocks.{n}.attn.query.kernel"),
+    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.query.bias", "vision_encoder.siglip_encoder.encoder.blocks.{n}.attn.query.bias"),
+    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.key.kernel", "vision_encoder.siglip_encoder.encoder.blocks.{n}.attn.key.kernel"),
+    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.key.bias", "vision_encoder.siglip_encoder.encoder.blocks.{n}.attn.key.bias"),
+    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.value.kernel", "vision_encoder.siglip_encoder.encoder.blocks.{n}.attn.value.kernel"),
+    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.value.bias", "vision_encoder.siglip_encoder.encoder.blocks.{n}.attn.value.bias"),
+    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.out.kernel", "vision_encoder.siglip_encoder.encoder.blocks.{n}.attn.out.kernel"),
+    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{n}.MultiHeadDotProductAttention_0.out.bias", "vision_encoder.siglip_encoder.encoder.blocks.{n}.attn.out.bias"),
+    # encoder: block: mlp
+    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{n}.MlpBlock_0.Dense_0.kernel", "vision_encoder.siglip_encoder.encoder.blocks.{n}.mlp.linear1.kernel"),
+    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{n}.MlpBlock_0.Dense_0.bias", "vision_encoder.siglip_encoder.encoder.blocks.{n}.mlp.linear1.bias"),
+    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{n}.MlpBlock_0.Dense_1.kernel", "vision_encoder.siglip_encoder.encoder.blocks.{n}.mlp.linear2.kernel"),
+    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{n}.MlpBlock_0.Dense_1.bias", "vision_encoder.siglip_encoder.encoder.blocks.{n}.mlp.linear2.bias"),
+    # encoder: block: pre-attn norm
+    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{n}.LayerNorm_0.scale", "vision_encoder.siglip_encoder.encoder.blocks.{n}.pre_attn_norm.scale"),
+    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{n}.LayerNorm_0.bias", "vision_encoder.siglip_encoder.encoder.blocks.{n}.pre_attn_norm.bias"),
+    # encoder: block: post-attn norm
+    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{n}.LayerNorm_1.scale", "vision_encoder.siglip_encoder.encoder.blocks.{n}.post_attn_norm.scale"),
+    R("vision_encoder.siglip_encoder.Transformer.encoderblock_{n}.LayerNorm_1.bias", "vision_encoder.siglip_encoder.encoder.blocks.{n}.post_attn_norm.bias"),
+    # encoder: norm
+    R("vision_encoder.siglip_encoder.Transformer.encoder_norm.scale", "vision_encoder.siglip_encoder.encoder.norm.scale"),
+    R("vision_encoder.siglip_encoder.Transformer.encoder_norm.bias", "vision_encoder.siglip_encoder.encoder.norm.bias"),
+    # conv
+    R("vision_encoder.siglip_encoder.embedding.kernel", "vision_encoder.siglip_encoder.conv.kernel"),
+    R("vision_encoder.siglip_encoder.embedding.bias", "vision_encoder.siglip_encoder.conv.bias"),
+    # pos embedding
     R("vision_encoder.siglip_encoder.pos_embedding", "vision_encoder.siglip_encoder.pos_embedding"),
 
     ## blocks

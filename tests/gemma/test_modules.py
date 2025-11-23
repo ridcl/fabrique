@@ -346,9 +346,6 @@ def test_transformer(auto_mesh):
     )
 
     update_module_from_params(model, RULES, params)
-    # hack: recreate the vision encoder to avoid abstract Rngs after eval_shape
-    # model.vision_encoder = model._wrap_and_init_vision_encoder(model.vision_encoder.module, nnx.Rngs(0))
-    model.vision_encoder = None
 
     out_nn = model_nn.apply({"params": params}, tokens=tokens, images=images)
     out = model(tokens=tokens, images=images)

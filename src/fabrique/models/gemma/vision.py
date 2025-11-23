@@ -71,7 +71,7 @@ class SigLiPFromPatches(nnx.Module):
         self,
         *,
         patches: jax.Array,   # Float["B N P D"]
-        is_training: bool,
+        # is_training: bool,
     ) -> jax.Array:    # Float["B N siglip_embed_dim"]:
         # chex.assert_rank(patches, 4)
         batch_size, num_frames, num_patches, num_channels = patches.shape

@@ -274,5 +274,5 @@ def test_siglip_from_patches():
     update_module_from_params(siglip, rules, variables["params"])
 
     out_nn = siglip_nn.apply(variables, patches=patches, is_training=False)
-    out = siglip(patches=patches, is_training=False)
+    out = siglip(patches=patches)
     assert jnp.allclose(out_nn, out, atol=1e-2)

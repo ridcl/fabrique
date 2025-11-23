@@ -52,7 +52,7 @@ class MlpBlock(nnx.Module):
         )
         mlp_dim = self.mlp_dim or 4 * input_dim
         self.linear1 = linear(input_dim, mlp_dim)
-        self.do = nnx.Dropout(rate=self.dropout, rngs=rngs)
+        self.do = nnx.Dropout(rate=self.dropout)
         self.linear2 = linear(mlp_dim, input_dim)
 
     def __call__(self, x: jax.Array, deterministic: bool = True) -> jax.Array:
@@ -143,7 +143,7 @@ class Encoder1DBlock(nnx.Module):
             decode=False,
             rngs=rngs,
         )
-        self.post_attn_dropout = nnx.Dropout(rate=dropout, rngs=rngs)
+        self.post_attn_dropout = nnx.Dropout(rate=dropout)
         self.post_attn_norm = nnx.LayerNorm(input_dim, rngs=rngs)
         self.mlp = MlpBlock(
             block_id=self.block_id,

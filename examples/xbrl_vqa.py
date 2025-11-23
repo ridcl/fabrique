@@ -289,7 +289,7 @@ def main(ckpt_base_path: str = "output/vqa_lora"):
 
     mesh = jax.make_mesh((1, len(jax.devices())), ("data", "model"))
     sampler = Sampler.load_model("gemma-3-4b-it", mesh=mesh)
-    sampler.model.vision_encoder.rngs = nnx.Rngs(0)  # hack around NNX <> Linen interop
+    # sampler.model.vision_encoder.rngs = nnx.Rngs(0)  # hack around NNX <> Linen interop
 
     lora_sharding = NamedSharding(mesh, P())
     lora.apply(sampler.model, rank=64, sharding=lora_sharding, rngs=nnx.Rngs(0))

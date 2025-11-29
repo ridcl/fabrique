@@ -44,17 +44,12 @@ def show_batch(sampler: Sampler, batch):
             batch["evidence"][i],
         )
         image = Image.open(image_path).resize(IMG_SHAPE)
-        out = sampler.sample(
-            PROMPT_TEMPLATE.format(question=question, markdown=markdown), images=[image]
-        )
+        out = sampler.sample(PROMPT_TEMPLATE, images=[image])
         color = COLORS[i % len(COLORS)]
         print(
             f"""\n{color}-------------- example {i} -------------
-            EXPECTED: {answer}
-
-            <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
-            ACTUAL: {out}{ENDC}
+            EXPECTED: \n{markdown[:100]}\n...\n{markdown[-100:]}\n
+            ACTUAL: \n{out[:100]}\n...\n{out[-100:]}
             """
         )
 
@@ -63,39 +58,31 @@ def calc_gen_metrics(sampler: Sampler, testset) -> dict[str, float]:
     from tqdm import tqdm
 
     metrics = []
-    answers = []
     output = []
     testset = testset.select(range(10))  # hack for faster metric calculation
     for batch in tqdm(
         testset.iter(batch_size=BATCH_SIZE), total=len(testset) // BATCH_SIZE
     ):
         for i in range(len(batch["image_path"])):
-            image_path, markdown, question, answer = (
+            image_path, markdown = (
                 batch["image_path"][i],
                 batch["markdown"][i],
-                batch["question"][i],
-                batch["evidence"][i],
             )
             image = Image.open(image_path).resize(IMG_SHAPE)
             out = sampler.sample(
-                PROMPT_TEMPLATE.format(question=question, markdown=markdown),
+                PROMPT_TEMPLATE,
                 images=[image],
             )
-            ans_tokens = sampler.tokenizer.encode(answer)
+            ans_tokens = sampler.tokenizer.encode(markdown)
             out_tokens = sampler.tokenizer.encode(out)
             metrics.append(rouge_l(ans_tokens, out_tokens))
-            answers.append(answer)
             output.append(out)
     avg_metrics = {
         "precision": sum([m["precision"] for m in metrics]) / len(testset),
         "recall": sum([m["recall"] for m in metrics]) / len(testset),
         "f1": sum([m["f1"] for m in metrics]) / len(testset),
     }
-    details = {
-        "answers": answers,
-        "output": output,
-    }
-    return avg_metrics, details
+    return avg_metrics, output
 
 
 # =============================
@@ -137,14 +124,8 @@ MAX_SEQ_LENGTH = 4096
 
 PROMPT_TEMPLATE = """
 <start_of_turn>user
-Given a page image and its <MARKDOWN>, extract evidence for the <QUESTION>
+Extract text from this image
 <start_of_image>
-<MARKDOWN>
-{markdown}
-</MARKDOWN>
-<QUESTION>
-{question}
-<QUESTION>
 <end_of_turn>
 <start_of_turn>model
 """
@@ -207,18 +188,13 @@ def train(sampler: Sampler, trainset: Dataset, testset: Dataset, ckpt_base_path:
             break
         metrics.reset()
         for i, batch in enumerate(trainset.iter(batch_size=BATCH_SIZE)):
-            image_paths, markdowns, questions, answers = (
+            image_paths, markdowns = (
                 batch["image_path"],
                 batch["markdown"],
-                batch["question"],
-                batch["evidence"],
             )
             images = [Image.open(path) for path in image_paths]
-            prompts = [
-                PROMPT_TEMPLATE.format(question=q, markdown=md)
-                for q, md in zip(questions, markdowns)
-            ]
-            completions = [COMPLETION_TEMPLATE.format(a) for a in answers]
+            prompts = [PROMPT_TEMPLATE for _ in range(len(markdowns))]
+            completions = [COMPLETION_TEMPLATE.format(md) for md in markdowns]
             tokens, completion_mask = encode_batch_for_prompt_completion(
                 tokenizer, prompts, completions, pad_to_multiple_of=64
             )
@@ -274,7 +250,7 @@ def show_result(sampler, testset):
         print("-" * 40)
 
 
-def main(ckpt_base_path: str = "output/vqa_lora"):
+def main(ckpt_base_path: str = "output/sft_ocr"):
     jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
     jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
     jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
@@ -289,7 +265,6 @@ def main(ckpt_base_path: str = "output/vqa_lora"):
 
     mesh = jax.make_mesh((1, len(jax.devices())), ("data", "model"))
     sampler = Sampler.load_model("gemma-3-4b-it", mesh=mesh)
-    # sampler.model.vision_encoder.rngs = nnx.Rngs(0)  # hack around NNX <> Linen interop
 
     lora_sharding = NamedSharding(mesh, P())
     lora.apply(sampler.model, rank=64, sharding=lora_sharding, rngs=nnx.Rngs(0))
@@ -297,35 +272,3 @@ def main(ckpt_base_path: str = "output/vqa_lora"):
     train(sampler, trainset, testset, ckpt_base_path)
     lora.merge(sampler.model)
     to_huggingface(sampler.model, "google/gemma-3-4b-it", "output/gemma-3-4b-audit-vqa")
-
-    from vllm import LLM
-
-    llm = LLM(model="output/gemma-3-4b-audit-vqa")
-    batch = next(testset.iter(batch_size=1))
-    image_path, markdown, question, answer = (
-        batch["image_path"][0],
-        batch["markdown"][0],
-        batch["question"][0],
-        batch["evidence"][0],
-    )
-    image = Image.open(image_path)
-    out = llm.chat(
-        [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "Given a page image and its <MARKDOWN>, extract evidence for the <QUESTION>",
-                    },
-                    {"type": "image_pil", "image_pil": image},
-                    {
-                        "type": "text",
-                        "text": f"<MARKDOWN>{markdown}</MARKDOWN>"
-                        + f"<QUESTION>{question}</QUESTION>",
-                    },
-                ],
-            }
-        ]
-    )
-    out[0].outputs[0].text

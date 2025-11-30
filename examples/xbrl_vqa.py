@@ -241,11 +241,12 @@ def train(sampler: Sampler, trainset: Dataset, testset: Dataset, ckpt_base_path:
             if step % 100 == 0:
                 gen_metrics, _ = calc_gen_metrics(sampler, testset)
                 print(f"!!! Epoch {epoch}, step {step}: gen_metrics = {gen_metrics}")
-                ckpt_path = os.path.join(f"{ckpt_base_path}/{datetime.now().strftime('%Y-%m_%H-%M-%S')}.ckpt")
+                ckpt_path = os.path.join(
+                    f"{ckpt_base_path}/{datetime.now().strftime('%Y-%m_%H-%M-%S')}.ckpt"
+                )
                 print(f"Saving LoRA checkpoint to {ckpt_path}")
                 lora.save(model, ckpt_path)
             # print(f"==== memory at step {step}: {get_memory_gb()}")
-
 
 
 # ===========
@@ -273,7 +274,6 @@ def show_result(sampler, testset):
         print("-" * 40)
 
 
-
 def main(ckpt_base_path: str = "output/vqa_lora"):
     jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
     jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
@@ -298,8 +298,8 @@ def main(ckpt_base_path: str = "output/vqa_lora"):
     lora.merge(sampler.model)
     to_huggingface(sampler.model, "google/gemma-3-4b-it", "output/gemma-3-4b-audit-vqa")
 
-
     from vllm import LLM
+
     llm = LLM(model="output/gemma-3-4b-audit-vqa")
     batch = next(testset.iter(batch_size=1))
     image_path, markdown, question, answer = (
@@ -309,12 +309,23 @@ def main(ckpt_base_path: str = "output/vqa_lora"):
         batch["evidence"][0],
     )
     image = Image.open(image_path)
-    out = llm.chat([
-        {"role": "user", "content": [
-            {"type": "text", "text": "Given a page image and its <MARKDOWN>, extract evidence for the <QUESTION>"},
-            {"type": "image_pil", "image_pil": image},
-            {"type": "text", "text": f"<MARKDOWN>{markdown}</MARKDOWN>" +
-                f"<QUESTION>{question}</QUESTION>"}
-            ]
-         }])
+    out = llm.chat(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Given a page image and its <MARKDOWN>, extract evidence for the <QUESTION>",
+                    },
+                    {"type": "image_pil", "image_pil": image},
+                    {
+                        "type": "text",
+                        "text": f"<MARKDOWN>{markdown}</MARKDOWN>"
+                        + f"<QUESTION>{question}</QUESTION>",
+                    },
+                ],
+            }
+        ]
+    )
     out[0].outputs[0].text

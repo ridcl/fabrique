@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import os
 import random
 import json
@@ -18,43 +19,7 @@ from fabrique import lora
 from fabrique.sampling import Sampler
 from fabrique.tokenizer_utils import encode_batch_for_prompt_completion
 from fabrique.export import to_huggingface
-from examples.rouge import rouge_n, rouge_l
-
-# from fabrique.training import TrainIterator
-
-
-# ===============================
-# Interactive helpers
-# ===============================
-
-# COLORS = [
-#     "\033[95m",
-#     "\033[94m",
-#     "\033[96m",
-#     "\033[92m",
-#     "\033[93m",
-#     "\033[91m",
-# ]
-# ENDC = "\033[0m"
-
-
-# def show_batch(sampler: Sampler, batch):
-#     for i in range(len(batch["image_path"])):
-#         image_path, markdown, question, answer = (
-#             batch["image_path"][i],
-#             batch["markdown"][i],
-#             batch["question"][i],
-#             batch["evidence"][i],
-#         )
-#         image = Image.open(image_path).resize(IMG_SHAPE)
-#         out = sampler.sample(PROMPT_TEMPLATE, images=[image])
-#         color = COLORS[i % len(COLORS)]
-#         print(
-#             f"""\n{color}-------------- example {i} -------------
-#             EXPECTED: \n{markdown[:100]}\n...\n{markdown[-100:]}\n
-#             ACTUAL: \n{out[:100]}\n...\n{out[-100:]}
-#             """
-#         )
+from fabrique.training import train_iterator
 
 
 def _metrics(expected: str, actual: str) -> dict[str, float]:
@@ -183,7 +148,6 @@ def _show_progress(sampler, trainset, testset):
 
 
 
-
 def train(sampler: Sampler, trainset: Dataset, testset: Dataset, ckpt_base_path: str):
     tokenizer = sampler.tokenizer
     model = sampler.model
@@ -196,39 +160,37 @@ def train(sampler: Sampler, trainset: Dataset, testset: Dataset, ckpt_base_path:
     metrics = nnx.MultiMetric(loss=nnx.metrics.Average("loss"))
     test_metrics, _ = evaluate(sampler, testset.select(range(10)))
     print(f"Metrics:\n\t{'\n\t'.join(k + ': ' + str(v) for k, v in test_metrics.items())}")
-    step = 0
-    for epoch in range(MAX_EPOCHS):
-        if step == MAX_STEPS:
+
+    for batch, ts in train_iterator(trainset, batch_size=BATCH_SIZE, max_steps=MAX_STEPS, max_epochs=MAX_EPOCHS):
+        if ts.new_epoch:
+            metrics.reset()
+        images, ground_truth = batch["image"], batch["ground_truth"]
+        prompts = [PROMPT_TEMPLATE for _ in range(len(images))]
+        completions = [COMPLETION_TEMPLATE.format(gt) for gt in ground_truth]
+        tokens, completion_mask = encode_batch_for_prompt_completion(
+            tokenizer, prompts, completions, pad_to_multiple_of=64
+        )
+        # array of size (B N H W C), where N=1 - number of images per prompt
+        images = [jnp.array(img.resize(IMG_SHAPE)) for img in images]
+        images = jnp.stack(images)[:, None, ...]
+        loss = train_step(
+            model, tokens, images, completion_mask, optimizer, metrics
+        )
+        print(
+            f"Epoch {ts.epoch}, step {ts.step}: avg_loss = {metrics.compute()['loss'].item():.2f}; batch_loss = {loss.item():.2f}"
+        )
+        if ts.step == MAX_STEPS:
+            _show_progress(sampler, trainset, testset)
+            print("Finished training!")
             break
-        metrics.reset()
-        for i, batch in enumerate(trainset.iter(batch_size=BATCH_SIZE)):
-            images, ground_truth = batch["image"], batch["ground_truth"]
-            prompts = [PROMPT_TEMPLATE for _ in range(len(images))]
-            completions = [COMPLETION_TEMPLATE.format(gt) for gt in ground_truth]
-            tokens, completion_mask = encode_batch_for_prompt_completion(
-                tokenizer, prompts, completions, pad_to_multiple_of=64
+        if ts.step % 250 == 0 and ts.step != 0:
+            _show_progress(sampler, trainset, testset)
+            ckpt_path = os.path.join(
+                f"{ckpt_base_path}/{datetime.now().strftime('%Y-%m_%H-%M-%S')}.ckpt"
             )
-            # array of size (B N H W C), where N=1 - number of images per prompt
-            images = [jnp.array(img.resize(IMG_SHAPE)) for img in images]
-            images = jnp.stack(images)[:, None, ...]
-            loss = train_step(
-                model, tokens, images, completion_mask, optimizer, metrics
-            )
-            print(
-                f"Epoch {epoch}, step {step}: avg_loss = {metrics.compute()['loss'].item():.2f}; batch_loss = {loss.item():.2f}"
-            )
-            step += 1
-            if step == MAX_STEPS:
-                _show_progress(sampler, trainset, testset)
-                print("Finished training!")
-                break
-            if step % 250 == 0:
-                _show_progress(sampler, trainset, testset)
-                ckpt_path = os.path.join(
-                    f"{ckpt_base_path}/{datetime.now().strftime('%Y-%m_%H-%M-%S')}.ckpt"
-                )
-                print(f"Saving LoRA checkpoint to {ckpt_path}")
-                lora.save(model, ckpt_path)
+            print(f"Saving LoRA checkpoint to {ckpt_path}")
+            lora.save(model, ckpt_path)
+
 
 
 # ===========

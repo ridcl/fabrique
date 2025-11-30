@@ -89,29 +89,25 @@ At each iteration of training, we will take a batch of data, calculate gradient 
         return loss
 
 
-Training loop, although conceptually simple, may be quite verbose. To address it, *fabrique* provides a special :class:`TrainIterator` class, which automatically handles loop boundaries, shows progress bar, etc. For example, the following code::
+Training loop, although conceptually simple, may be quite verbose. To address it, *fabrique* provides a special :function:`train_iterator` class, which automatically handles loop boundaries, shows progress bar, etc. For example, the following code::
 
-    from fabrique.training import TrainIterator
+    from fabrique.training import train_iterator
 
-    ti = TrainIterator(dataset, max_epochs=10, max_steps=1000, batch_size=8, logger="tqdm")
-    for batch in ti:
+    for batch, ts in train_iterator(dataset, max_epochs=10, max_steps=1000, batch_size=8):
         loss = train_step(...)
-        ti.log("loss", loss)   # update progress bar suffix
+
 
 is roughly equivalent to the following double loop::
 
-    pbar = tqdm(...)
     step = 0
     for epoch in range(max_epochs):
-        for batch in dataset.iter(batch_size=8):
+        for batch in tqdm(dataset.iter(batch_size=8)):
             loss = train_step(...)
-            pbar.set_suffix({"loss": f"{loss:.4f}"})
-            pbar.update()
             step += 1
             if step == max_steps:
                 break
 
-Of course, beyond providing a flat iterator, ``TrainIterator`` doesn't restrict the training loop in any way. You can still track metrics to your favorite tool, save checkpoints, or break the loop early.
+Of course, beyond providing a flat iterator, :function:`train_iterator` doesn't restrict the training loop in any way. You can still track metrics to your favorite tool, save checkpoints, or break the loop early.
 
 Putting it all together, we get::
 
@@ -121,7 +117,7 @@ Putting it all together, we get::
     from datasets import load_dataset
     from fabrique.loading import load_model
     from fabrique.tokenizer_utils import encode_batch_for_prompt_completion
-    from fabrique.training import TrainIterator
+    from fabrique.training import train_iterator
 
 
     PROMPT_TEMPLATE = """<start_of_turn>user\n{}<end_of_turn>\n<start_of_turn>model\n"""
@@ -160,15 +156,13 @@ Putting it all together, we get::
     dataset = load_dataset("meta-math/MetaMathQA", split="train")
     optimizer = nnx.Optimizer(model, optax.sgd(1e-3), wrt=nnx.Param)
 
-    ti = TrainIterator(dataset, max_epochs=10, max_steps=1000, batch_size=1, logger="tqdm")
-    for batch in ti:
+    for batch in train_iterator(dataset, max_epochs=10, max_steps=1000, batch_size=1):
         prompts = [PROMPT_TEMPLATE.format(rec["query"]) for rec in batch]
         completions = [COMPLETION_TEMPLATE.format(rec["response"]) for rec in batch]
         tokens, completion_mask = encode_batch_for_prompt_completion(
             tokenizer, prompts, completions, pad_to_multiple_of=128,
         )
         loss = train_step(model, tokens, completion_mask, optimizer)
-        ti.log("loss", loss)   # update progress bar suffix
 
 
 .. note::

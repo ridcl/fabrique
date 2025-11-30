@@ -52,27 +52,3 @@ def to_huggingface(model, hf_repo_id, output_dir: str, strict=True) -> None:
         st = load_file(filename)
         _update_safetensor_dict(model, st, HF_EXPORT_RULES)
         save_file(st, filename)  # overrides the file
-
-
-
-def main():
-    import jax.numpy as jnp
-    from fabrique.loading import load_model, einsum_to_linear
-    tokenizer, model = load_model("gemma-3-4b-it")
-
-    hf_repo_id = "google/gemma-3-4b-it"
-    output_dir = "output/hf_export"
-
-    path = "/home/devpod/.cache/huggingface/hub/models--google--gemma-3-4b-it/snapshots/093f9f388b31de276ce2de164bdc2081324b9767/model-00001-of-00002.safetensors"
-    path = "/home/devpod/.cache/huggingface/hub/models--google--gemma-3-4b-it/snapshots/093f9f388b31de276ce2de164bdc2081324b9767/model-00002-of-00002.safetensors"
-    st = load_file(path)
-
-    w = model.blocks[0].mlp.linear.kernel
-    # wl = einsum_to_linear("...F,NHF->...NH", w)
-    # wl = jnp.split(wl, 2)[0]
-    t = lambda w: einsum_to_linear("...H,HF->...F", w)
-    wl = t(w)
-    dl = st["language_model.model.layers.0.input_layernorm.weight"]
-    jnp.all(wl == dl)
-
-    rules = HF_EXPORT_RULES

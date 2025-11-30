@@ -15,9 +15,7 @@ from fabrique import lora
 from fabrique.sampling import Sampler
 from fabrique.tokenizer_utils import encode_batch_for_prompt_completion
 from fabrique.export import to_huggingface
-from examples.rouge import rouge_n, rouge_l
-
-# from fabrique.training import TrainIterator
+from examples.rouge import rouge_l
 
 
 # ===============================

@@ -12,8 +12,6 @@ from fabrique.lora import LoRAEinsum
 from fabrique.sampling import Sampler
 from fabrique.tokenizer_utils import encode_batch_for_prompt_completion
 
-# from fabrique.training import TrainIterator
-
 
 BATCH_SIZE = 2
 IMG_SHAPE = (896, 896)
@@ -145,7 +143,6 @@ def train(sampler: Sampler, dataset: Dataset):
     metrics = nnx.MultiMetric(
         loss=nnx.metrics.Average("loss"),
     )
-    # ti = TrainIterator(dataset, max_epochs=MAX_EPOCHS, max_steps=MAX_STEPS)
     step = 0
     for epoch in range(MAX_EPOCHS):
         if step == MAX_STEPS:

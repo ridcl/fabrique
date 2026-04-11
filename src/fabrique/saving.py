@@ -24,13 +24,13 @@ import os
 import shutil
 from typing import Any, Callable
 
-from flax import nnx
 import jax.numpy as jnp
 import safetensors.numpy as safe_np
+from flax import nnx
 
 
 def _join_path(path) -> str:
-    return '.'.join([str(field) for field in path])
+    return ".".join([str(field) for field in path])
 
 
 def save_lora_merged_model_as_safetensors(
@@ -73,14 +73,14 @@ def save_lora_merged_model_as_safetensors(
         if isinstance(value, nnx.LoRAParam):
             path_str = _join_path(path[:-1])
             if path_str in lora_layers:
-                assert 'lora_b' in path[-1], (
-                    f'Expect second LoRAParam to be lora_b, got {path[-1]}'
-                )
+                assert (
+                    "lora_b" in path[-1]
+                ), f"Expect second LoRAParam to be lora_b, got {path[-1]}"
                 lora_layers[path_str].append(value)
             else:
-                assert 'lora_a' in path[-1], (
-                    f'Expect first LoRAParam to be lora_a, got {path[-1]}'
-                )
+                assert (
+                    "lora_a" in path[-1]
+                ), f"Expect first LoRAParam to be lora_a, got {path[-1]}"
                 lora_layers[path_str] = [value]
 
     if custom_layer_extractor_fn:
@@ -93,24 +93,22 @@ def save_lora_merged_model_as_safetensors(
     }
 
     # Determine whether the base model is single-file or sharded.
-    single_path = os.path.join(local_model_path, 'model.safetensors')
-    index_path = os.path.join(local_model_path, 'model.safetensors.index.json')
+    single_path = os.path.join(local_model_path, "model.safetensors")
+    index_path = os.path.join(local_model_path, "model.safetensors.index.json")
 
     if os.path.exists(single_path):
-        shard_files = ['model.safetensors']
+        shard_files = ["model.safetensors"]
     elif os.path.exists(index_path):
         with open(index_path) as f:
             index_data = json.load(f)
         seen: set[str] = set()
         shard_files = []
-        for shard in index_data['weight_map'].values():
+        for shard in index_data["weight_map"].values():
             if shard not in seen:
                 seen.add(shard)
                 shard_files.append(shard)
     else:
-        raise FileNotFoundError(
-            f'No safetensors weights found in {local_model_path}'
-        )
+        raise FileNotFoundError(f"No safetensors weights found in {local_model_path}")
 
     # Process each shard: apply any LoRA deltas whose keys live in that shard.
     applied_keys: set[str] = set()
@@ -122,8 +120,8 @@ def save_lora_merged_model_as_safetensors(
             if state_key not in shard_state:
                 continue
 
-            lora_a_val = jnp.asarray(getattr(lora_a, 'value', lora_a))
-            lora_b_val = jnp.asarray(getattr(lora_b, 'value', lora_b))
+            lora_a_val = jnp.asarray(getattr(lora_a, "value", lora_a))
+            lora_b_val = jnp.asarray(getattr(lora_b, "value", lora_b))
 
             if lora_a_val.ndim == 3:
                 d0, d1, d2 = lora_a_val.shape
@@ -139,21 +137,17 @@ def save_lora_merged_model_as_safetensors(
                         combined_lora = combined_lora.transpose(rule)
                         break
 
-            shard_state[state_key] += combined_lora.astype(
-                shard_state[state_key].dtype
-            )
+            shard_state[state_key] += combined_lora.astype(shard_state[state_key].dtype)
             applied_keys.add(state_key)
 
         safe_np.save_file(shard_state, os.path.join(output_dir, shard_filename))
 
     missing = set(lora_deltas.keys()) - applied_keys
-    assert not missing, (
-        f'LoRA layers not found in any base model shard: {missing}'
-    )
+    assert not missing, f"LoRA layers not found in any base model shard: {missing}"
 
     # Copy non-safetensors files (config, tokenizer, etc.).
     for filename in os.listdir(local_model_path):
-        if not filename.endswith('.safetensors'):
+        if not filename.endswith(".safetensors"):
             src = os.path.join(local_model_path, filename)
             if os.path.isfile(src):
                 shutil.copy(src, os.path.join(output_dir, filename))
@@ -163,25 +157,26 @@ def save_lora_merged_model_as_safetensors(
 # Qwen3-VL convenience wrapper
 # ---------------------------------------------------------------------------
 
+
 def _qwen3_state_key(lora_name: str) -> str:
-    key = f'model.{lora_name}.weight'.replace('.attn.', '.self_attn.')
+    key = f"model.{lora_name}.weight".replace(".attn.", ".self_attn.")
     # Qwen3-VL checkpoints nest language model layers under 'language_model.'
     # (model.language_model.layers.*), while text-only Qwen3 checkpoints use
     # model.layers.* directly.  Only rewrite the layers prefix.
-    if key.startswith('model.layers.'):
-        key = 'model.language_model.' + key[len('model.'):]
+    if key.startswith("model.layers."):
+        key = "model.language_model." + key[len("model.") :]
     return key
 
 
 _QWEN3_TRANSPOSE_RULES: dict[str, tuple[int, ...]] = {
-    'q_proj': (1, 0),
-    'k_proj': (1, 0),
-    'v_proj': (1, 0),
-    'o_proj': (1, 0),
-    'up_proj': (1, 0),
-    'down_proj': (1, 0),
-    'gate_proj': (1, 0),
-    'gate': (1, 0),
+    "q_proj": (1, 0),
+    "k_proj": (1, 0),
+    "v_proj": (1, 0),
+    "o_proj": (1, 0),
+    "up_proj": (1, 0),
+    "down_proj": (1, 0),
+    "gate_proj": (1, 0),
+    "gate": (1, 0),
 }
 
 

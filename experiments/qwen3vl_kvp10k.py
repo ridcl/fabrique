@@ -25,6 +25,9 @@ import qwix
 from flax import nnx
 from PIL import Image, ImageDraw
 from tqdm import tqdm
+from tunix.rl import reshard as reshard_lib
+from tunix.sft import metrics_logger, peft_trainer
+
 from fabrique.models.qwen3vl import model as model_lib
 from fabrique.models.qwen3vl import params as params_lib
 from fabrique.models.qwen3vl.sampler import (
@@ -35,8 +38,6 @@ from fabrique.models.qwen3vl.sampler import (
 from fabrique.models.qwen3vl.utils import encode_messages, load_processor
 from fabrique.models.qwen3vl.vision import VisionGridData
 from fabrique.saving import save_qwen3vl_lora_merged
-from tunix.rl import reshard as reshard_lib
-from tunix.sft import metrics_logger, peft_trainer
 from fabrique.utils import show_hbm_usage
 
 logging.basicConfig(level=logging.INFO)

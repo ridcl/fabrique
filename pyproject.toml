@@ -12,12 +12,15 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "accelerate>=1.13.0",
     "black>=25.1.0",
     "ipython>=9.2.0",
     "isort>=6.0.1",
     "mypy>=1.15.0",
     "pytest>=8.4.1",
     "ruff>=0.13.1",
+    "torch>=2.11.0",
+    "transformers>=4.52",
 ]
 extra = [
     "pillow>=11.2.1",

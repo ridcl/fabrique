@@ -16,7 +16,6 @@ from fabrique.models.gemma.modeling import Transformer
 from fabrique.sampling import Sampler
 from fabrique.tokenizer_utils import encode_batch_for_prompt_completion
 
-
 # =====================
 # Dataset preparation
 # =====================

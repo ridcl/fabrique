@@ -12,7 +12,6 @@ from fabrique.lora import LoRAEinsum
 from fabrique.sampling import Sampler
 from fabrique.tokenizer_utils import encode_batch_for_prompt_completion
 
-
 BATCH_SIZE = 2
 IMG_SHAPE = (896, 896)
 MAX_STEPS = 1000

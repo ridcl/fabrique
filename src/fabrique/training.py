@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
-from tqdm import tqdm
 from datasets import Dataset
+from tqdm import tqdm
 
 
 @dataclass

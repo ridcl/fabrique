@@ -55,7 +55,9 @@ def _pattern_to_regexp(pat: str) -> str:
     return pat
 
 
-def convert_path(path: str, in_pattern: str, out_pattern: str | RuleIgnore) -> Optional[str]:
+def convert_path(
+    path: str, in_pattern: str, out_pattern: str | RuleIgnore
+) -> Optional[str]:
     """
     Convert path according to input and output patterns. Example:
 
@@ -168,15 +170,15 @@ def load_model(variant: str, *, mesh: jax.sharding.Mesh | None = None):
     raise ValueError(f"Model {variant} is unknown")
 
 
-
 # ================================
 # Parameter converters
 # ================================
 
 
-import jax.numpy as jnp
 import re
-from typing import Tuple, List
+from typing import List, Tuple
+
+import jax.numpy as jnp
 
 
 def einsum_to_linear(einsum_str: str, w: jnp.ndarray) -> jnp.ndarray:
@@ -209,7 +211,9 @@ def einsum_to_linear(einsum_str: str, w: jnp.ndarray) -> jnp.ndarray:
     # Parse the einsum string
     parts = einsum_str.replace(" ", "").split("->")
     if len(parts) != 2:
-        raise ValueError(f"Invalid einsum string: {einsum_str}. Expected format: 'ABC,DEF->GHI'")
+        raise ValueError(
+            f"Invalid einsum string: {einsum_str}. Expected format: 'ABC,DEF->GHI'"
+        )
 
     inputs_str, output_str = parts
     input_parts = inputs_str.split(",")
@@ -222,18 +226,32 @@ def einsum_to_linear(einsum_str: str, w: jnp.ndarray) -> jnp.ndarray:
     output_indices = output_str  # e.g., "BTNH"
 
     # Find batch/sequence dimensions (appear in input_data and output, not in weight)
-    batch_dims = [idx for idx in input_data_indices if idx in output_indices and idx not in input_weight_indices]
+    batch_dims = [
+        idx
+        for idx in input_data_indices
+        if idx in output_indices and idx not in input_weight_indices
+    ]
 
     # Find the contraction dimension (appears in both inputs but not in output)
-    contraction_dims = [idx for idx in input_data_indices if idx in input_weight_indices and idx not in output_indices]
+    contraction_dims = [
+        idx
+        for idx in input_data_indices
+        if idx in input_weight_indices and idx not in output_indices
+    ]
 
     if len(contraction_dims) != 1:
-        raise ValueError(f"Expected exactly 1 contraction dimension, found {len(contraction_dims)}: {contraction_dims}")
+        raise ValueError(
+            f"Expected exactly 1 contraction dimension, found {len(contraction_dims)}: {contraction_dims}"
+        )
 
     contraction_dim = contraction_dims[0]
 
     # Find output dimensions from weight (in output but not in batch_dims or contraction)
-    weight_output_dims = [idx for idx in output_indices if idx not in batch_dims and idx != contraction_dim]
+    weight_output_dims = [
+        idx
+        for idx in output_indices
+        if idx not in batch_dims and idx != contraction_dim
+    ]
 
     # Find input dimensions from weight (in weight but not contraction)
     weight_only_dims = [idx for idx in input_weight_indices if idx != contraction_dim]
@@ -261,7 +279,9 @@ def einsum_to_linear(einsum_str: str, w: jnp.ndarray) -> jnp.ndarray:
 
     # Determine the final shape for linear weight
     # Format: [product of output dims, contraction dim]
-    output_dim_positions = [i for i, idx in enumerate(target_order_indices) if idx != contraction_dim]
+    output_dim_positions = [
+        i for i, idx in enumerate(target_order_indices) if idx != contraction_dim
+    ]
     contraction_dim_position = len(target_order_indices) - 1
 
     # Calculate the sizes

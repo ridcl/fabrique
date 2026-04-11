@@ -162,6 +162,9 @@ reference/
 # tools
 .claude/
 
+# lock files
+uv.lock
+
 # special files
 output/
 _main.py

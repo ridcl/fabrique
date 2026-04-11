@@ -27,3 +27,6 @@ extra = [
 
 [tool.uv]
 default-groups = ["dev", "extra"]
+
+[tool.uv.sources]
+google-tunix = { git = "https://github.com/google/tunix", branch = "main" }

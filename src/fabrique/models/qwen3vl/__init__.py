@@ -16,4 +16,4 @@
 
 from fabrique.models.qwen3vl import model, params
 
-__all__ = ["model", "params"]
+__all__ = ['model', 'params']

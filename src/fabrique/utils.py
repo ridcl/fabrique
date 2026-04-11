@@ -224,3 +224,72 @@ def keys_to_path(keys):
         elif hasattr(key, "name"):  # GetAttrKey
             key_names.append(key.name)
     return ".".join(key_names)
+
+
+# Copyright 2025 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Simple utils used by SFT."""
+
+import collections
+import contextlib
+import functools
+import gc
+import time
+from typing import Any, List, Optional, Tuple
+
+from absl import logging
+from flax import nnx
+import humanize
+import jax
+import jax.numpy as jnp
+from tunix.oss import utils as google_utils
+
+
+# Copied from Tunix with logging.info() -> print() for unconditional printing
+def _jax_hbm_usage_gb(devices: Any) -> List[Tuple[float, float]]:
+    """Returns the HBM usage for each device when using JAX."""
+    hbm_used = []
+    for device in devices:
+        if device.platform == "cpu":
+            logging.warning(
+                "Skipping non-TPU device: %s. You might be missing jax[tpu]"
+                " dependency.",
+                device.platform,
+            )
+            return []
+        stats = device.memory_stats()
+        used = stats["bytes_in_use"]
+        limit = stats["bytes_limit"]
+        hbm_used.append((used, limit))
+    return hbm_used
+
+
+def show_hbm_usage(title=""):
+    """Prints the current HBM usage.
+
+    Args:
+        title: The title to print before the HBM usage.
+    """
+    fmt_size = functools.partial(humanize.naturalsize, binary=True)
+    # Force a GC sweep to catch recently deallocated arrays
+    gc.collect()
+
+    devices = jax.local_devices()
+    hbm_stats = _jax_hbm_usage_gb(devices)
+
+    for i, (used, limit) in enumerate(hbm_stats):
+        print(
+            f"Using {fmt_size(used)} / {fmt_size(limit)} ({used / limit:.1%}) on {devices[i]}"
+        )

@@ -168,19 +168,34 @@ def create_model_from_safe_tensors(
 
     if cpu_embed:
         import gc as _gc
+        import numpy as _np
 
-        cpu = jax.devices("cpu")[0]
-        # Move the large embedding tables to CPU and free the GPU buffers.
-        model.embedder.input_embedding.value = jax.device_put(
-            model.embedder.input_embedding.value, cpu
+        # Extract the large embedding tables as numpy arrays (CPU RAM) and wrap
+        # them in _CPUEmbedding so NNX stores them as Static in the graphdef –
+        # not as JAX-array leaves in the traced JIT state.  This allows the
+        # jax.jit-compiled decode loop to run without CPU-array arguments.
+        model.embedder._input_embed_np = model_lib._CPUEmbedding(
+            _np.asarray(jax.device_get(model.embedder.input_embedding.value))
         )
+        # Replace the large GPU Variable value with a tiny placeholder so that
+        # nnx.variables(model) no longer returns the 1.3 GiB tensor.
+        model.embedder.input_embedding.value = jnp.zeros(
+            (1,), dtype=model.embedder.input_embedding.value.dtype
+        )
+
         if hasattr(model.embedder, "per_layer_input_embedding"):
-            model.embedder.per_layer_input_embedding.value = jax.device_put(
-                model.embedder.per_layer_input_embedding.value, cpu
+            model.embedder._ple_np = model_lib._CPUEmbedding(
+                _np.asarray(
+                    jax.device_get(model.embedder.per_layer_input_embedding.value)
+                )
             )
+            model.embedder.per_layer_input_embedding.value = jnp.zeros(
+                (1,), dtype=model.embedder.per_layer_input_embedding.value.dtype
+            )
+
         jax.effects_barrier()
         _gc.collect()
-        # Tell the embedder to route all lookups through CPU→GPU transfers.
+        # Tell the embedder to route all lookups through jax.pure_callback.
         model.embedder._cpu_offload = True
 
     return model

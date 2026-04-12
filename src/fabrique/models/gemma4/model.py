@@ -16,6 +16,7 @@ import flax
 import jax
 import jax.sharding as shd
 import jaxtyping
+import numpy as np
 from flax import nnx
 from jax import numpy as jnp
 from jax.experimental.pallas.ops.tpu.splash_attention import (
@@ -290,6 +291,48 @@ class ModelConfig:
         )
 
 
+class _CPUEmbedding:
+    """Opaque wrapper around a CPU numpy array for ``_cpu_offload`` mode.
+
+    By not being a ``jax.Array`` or ``np.ndarray`` directly, NNX stores this
+    object in the graphdef as a *Static* constant (keyed by Python object
+    identity) rather than as a JAX-array leaf in the traced state.  This keeps
+    the large embedding tables off the GPU JIT-arg tree while still making them
+    accessible to ``jax.pure_callback`` closures inside the decode loop.
+
+    Identity-based ``__hash__`` / ``__eq__`` satisfy NNX's requirement for
+    hashable static values and remain stable for the lifetime of the object.
+    """
+
+    __slots__ = ("_data", "_data_f32")
+
+    def __init__(self, data: np.ndarray) -> None:
+        self._data: np.ndarray = data
+        self._data_f32: np.ndarray | None = None
+
+    def __getitem__(self, idx):
+        """Index lookup – used by ``encode`` and ``encode_per_layer_input``."""
+        return self._data[idx]
+
+    def matmul_transpose(self, h: np.ndarray) -> np.ndarray:
+        """Compute ``h @ data.T`` in float32, returning a float32 ndarray.
+
+        The float32 view is cached after the first call to avoid re-casting
+        the full embedding table on every decode step.
+        """
+        if self._data_f32 is None:
+            self._data_f32 = np.asarray(self._data, dtype=np.float32)
+        return np.dot(h, self._data_f32.T)
+
+    # NNX Static requires __eq__ and __hash__; use identity semantics so the
+    # graphdef is stable for the lifetime of this object.
+    def __hash__(self) -> int:
+        return id(self)
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+
 class Embedder(nnx.Module):
     """Embedder module."""
 
@@ -304,9 +347,15 @@ class Embedder(nnx.Module):
         self.param_dtype = config.param_dtype
 
         # When True, the two large embedding tables live on CPU and lookups are
-        # routed through explicit CPU→accelerator device transfers.  Set by the
-        # params loader when cpu_embed=True (e.g. for the E4B model).
+        # routed through jax.pure_callback so they never appear as GPU JIT args.
+        # Set by the params loader when cpu_embed=True (e.g. for the E4B model).
         self._cpu_offload: bool = False
+
+        # _CPUEmbedding wrappers for the numpy-resident embedding tables.
+        # Stored as non-array Python objects so NNX treats them as Static in
+        # the graphdef (not as JAX-array leaves in the traced state).
+        self._input_embed_np: _CPUEmbedding | None = None
+        self._ple_np: _CPUEmbedding | None = None
 
         self.input_embedding = nnx.Param(
             nnx.initializers.normal(dtype=self.param_dtype)(
@@ -343,10 +392,17 @@ class Embedder(nnx.Module):
 
     def encode(self, x: jaxtyping.ArrayLike) -> jaxtyping.Array:
         if self._cpu_offload:
-            # Embedding table is on CPU: move token IDs there, gather, bring back.
-            cpu = jax.devices("cpu")[0]
-            gpu = jax.devices()[0]
-            x = jax.device_put(self.input_embedding.value[jax.device_put(x, cpu)], gpu)
+            # CPU embedding table – access via pure_callback so it is never a
+            # GPU JIT argument.  The callback receives concrete numpy token IDs
+            # and returns a float32 numpy array; we cast to param_dtype on-device.
+            _embed = self._input_embed_np
+            out_shape = jax.ShapeDtypeStruct(
+                x.shape + (self.embed_dim,), jnp.float32
+            )
+            x = jax.pure_callback(
+                lambda ids: _embed[ids].astype(np.float32), out_shape, x
+            )
+            x = jnp.astype(x, self.param_dtype)
         else:
             x = self.input_embedding[(x,)]
         x *= jnp.sqrt(x.shape[-1]).astype(x.dtype)
@@ -363,11 +419,16 @@ class Embedder(nnx.Module):
         x = self.per_layer_model_projection(x)
         x = self.per_layer_projection_norm(x)
         if self._cpu_offload:
-            cpu = jax.devices("cpu")[0]
-            gpu = jax.devices()[0]
-            y = jax.device_put(
-                self.per_layer_input_embedding.value[jax.device_put(t, cpu)], gpu
+            # CPU PLE table – access via pure_callback.
+            _ple = self._ple_np
+            out_shape = jax.ShapeDtypeStruct(
+                t.shape + (self.config.num_layers, self.config.per_layer_input_dim),
+                jnp.float32,
             )
+            y = jax.pure_callback(
+                lambda ids: _ple[ids].astype(np.float32), out_shape, t
+            )
+            y = jnp.astype(y, self.param_dtype)
         else:
             y = self.per_layer_input_embedding.value[t]
         y *= jnp.sqrt(self.config.per_layer_input_dim).astype(y.dtype)
@@ -375,12 +436,17 @@ class Embedder(nnx.Module):
 
     def decode(self, x: jaxtyping.ArrayLike) -> jaxtyping.Array:
         if self._cpu_offload:
-            # Embedding table is on CPU: move hidden state there, matmul, bring back.
-            cpu = jax.devices("cpu")[0]
-            gpu = jax.devices()[0]
-            x_cpu = jax.device_put(jnp.astype(x, self.config.dtype), cpu)
-            w_cpu = jnp.astype(self.input_embedding.value, self.config.dtype)
-            return jax.device_put(jnp.dot(x_cpu, w_cpu.T), gpu)
+            # CPU embedding table – matmul via pure_callback.  Compute in
+            # float32 (BLAS-friendly); cast the result to config.dtype on-device.
+            _embed = self._input_embed_np
+            x_f32 = jnp.astype(x, jnp.float32)
+            out_shape = jax.ShapeDtypeStruct(
+                x.shape[:-1] + (self.vocab_size,), jnp.float32
+            )
+            result = jax.pure_callback(
+                lambda h: _embed.matmul_transpose(h), out_shape, x_f32
+            )
+            return jnp.astype(result, self.config.dtype)
         x = jnp.astype(x, self.config.dtype)
         w = jnp.astype(self.input_embedding.value, self.config.dtype)
         return jnp.dot(x, w.T)
@@ -1106,6 +1172,37 @@ class Gemma4(BackendMappingMixin, nnx.Module):
         # Attention always returns {'k', 'v'} now; dedicated layers save here so
         # that shared layers (kv_cache_sharing_patterns[i] != i) can look them up.
         _kv_share_store: dict[str, dict] = {}
+
+        # Adjust attention_mask for the KV cache key dimension.  When a cache
+        # is provided, the stored K/V spans the full cache_size, so the key
+        # axis of the attention logits is [B, T, N, cache_size] rather than
+        # [B, T, N, T].  Build or pad the mask to match, mirroring the same
+        # logic in the Qwen3-VL model.
+        if cache is not None:
+            _first_cache = next(iter(cache.values()))
+            _cache_size = _first_cache["k"].shape[1]
+            _seq_len_q = tokens.shape[1]
+            if _seq_len_q == 1:
+                # Decode step: build a mask attending to all filled slots
+                # 0..end_index (end_index is the slot just written for the
+                # current token, so it must be included).
+                _end_index = _first_cache["end_index"][0]  # scalar
+                _cache_pos = jnp.arange(_cache_size)
+                attention_mask = (_cache_pos[None, None, :] <= _end_index).astype(
+                    jnp.bool_
+                )
+                attention_mask = jnp.broadcast_to(
+                    attention_mask, (tokens.shape[0], 1, _cache_size)
+                )
+            elif attention_mask is not None:
+                # Prefill: pad the [B, L, L] mask to [B, L, cache_size] by
+                # appending False columns so unfilled cache slots are blocked.
+                _pad_len = _cache_size - attention_mask.shape[-1]
+                if _pad_len > 0:
+                    attention_mask = jnp.pad(
+                        attention_mask, [(0, 0), (0, 0), (0, _pad_len)]
+                    )
+
         x = self.embedder.encode(tokens)
         bsz = x.shape[0]
 

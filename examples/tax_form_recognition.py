@@ -1,24 +1,23 @@
-from dataclasses import dataclass
+import json
 import os
 import random
-import json
+from dataclasses import dataclass
 from datetime import datetime
-
 
 import jax
 import jax.numpy as jnp
 import optax
-from tqdm import tqdm
 from datasets import Dataset, load_dataset
 from flax import nnx
 from jax.sharding import NamedSharding
 from jax.sharding import PartitionSpec as P
 from PIL import Image
+from tqdm import tqdm
 
 from fabrique import lora
+from fabrique.export import to_huggingface
 from fabrique.sampling import Sampler
 from fabrique.tokenizer_utils import encode_batch_for_prompt_completion
-from fabrique.export import to_huggingface
 from fabrique.training import train_iterator
 
 
@@ -39,7 +38,7 @@ def _metrics(expected: str, actual: str) -> dict[str, float]:
         "fn": fn,
         "precision": tp / (tp + fp) if (tp + fp) > 0 else 0,
         "recall": tp / (tp + fn) if (tp + fn) > 0 else 0,
-        "f1": 2 * tp / (2 * tp + fp + fn)
+        "f1": 2 * tp / (2 * tp + fp + fn),
     }
 
 
@@ -147,7 +146,6 @@ def _show_progress(sampler, trainset, testset):
         print(f"{color}{k}: {ev} <> {av}{end_color}")
 
 
-
 def train(sampler: Sampler, trainset: Dataset, testset: Dataset, ckpt_base_path: str):
     tokenizer = sampler.tokenizer
     model = sampler.model
@@ -159,9 +157,13 @@ def train(sampler: Sampler, trainset: Dataset, testset: Dataset, ckpt_base_path:
     optimizer = nnx.Optimizer(model, optax.sgd(1e-3), wrt=trainable)
     metrics = nnx.MultiMetric(loss=nnx.metrics.Average("loss"))
     test_metrics, _ = evaluate(sampler, testset.select(range(10)))
-    print(f"Metrics:\n\t{'\n\t'.join(k + ': ' + str(v) for k, v in test_metrics.items())}")
+    print(
+        f"Metrics:\n\t{'\n\t'.join(k + ': ' + str(v) for k, v in test_metrics.items())}"
+    )
 
-    for batch, ts in train_iterator(trainset, batch_size=BATCH_SIZE, max_steps=MAX_STEPS, max_epochs=MAX_EPOCHS):
+    for batch, ts in train_iterator(
+        trainset, batch_size=BATCH_SIZE, max_steps=MAX_STEPS, max_epochs=MAX_EPOCHS
+    ):
         if ts.new_epoch:
             metrics.reset()
         images, ground_truth = batch["image"], batch["ground_truth"]
@@ -173,9 +175,7 @@ def train(sampler: Sampler, trainset: Dataset, testset: Dataset, ckpt_base_path:
         # array of size (B N H W C), where N=1 - number of images per prompt
         images = [jnp.array(img.resize(IMG_SHAPE)) for img in images]
         images = jnp.stack(images)[:, None, ...]
-        loss = train_step(
-            model, tokens, images, completion_mask, optimizer, metrics
-        )
+        loss = train_step(model, tokens, images, completion_mask, optimizer, metrics)
         print(
             f"Epoch {ts.epoch}, step {ts.step}: avg_loss = {metrics.compute()['loss'].item():.2f}; batch_loss = {loss.item():.2f}"
         )
@@ -190,7 +190,6 @@ def train(sampler: Sampler, trainset: Dataset, testset: Dataset, ckpt_base_path:
             )
             print(f"Saving LoRA checkpoint to {ckpt_path}")
             lora.save(model, ckpt_path)
-
 
 
 # ===========

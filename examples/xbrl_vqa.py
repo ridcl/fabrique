@@ -11,12 +11,11 @@ from jax.sharding import NamedSharding
 from jax.sharding import PartitionSpec as P
 from PIL import Image
 
+from examples.rouge import rouge_l
 from fabrique import lora
+from fabrique.export import to_huggingface
 from fabrique.sampling import Sampler
 from fabrique.tokenizer_utils import encode_batch_for_prompt_completion
-from fabrique.export import to_huggingface
-from examples.rouge import rouge_l
-
 
 # ===============================
 # Interactive helpers

@@ -1,1 +1,0 @@
-Files in this directory are more like a Jypiter notebook with code snippets for experimentation and quick verification. These files are not used in the rest of the code and normally you should not worry about them.

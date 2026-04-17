@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 from flax import nnx
+
 from fabrique import lora
 
 
@@ -9,7 +10,9 @@ def test__merge_lora_einsum_inplace():
     einsum = nnx.Einsum("AB,BC->AC", kernel_shape=(10, 20), rngs=rngs)
     lora_einsum = lora.LoRAEinsum(5, einsum, rngs=rngs)
     # make lora_b also non-zero for this test
-    lora_einsum.adapter.lora_b = jax.random.normal(rngs(), lora_einsum.adapter.lora_b.shape)
+    lora_einsum.adapter.lora_b = jax.random.normal(
+        rngs(), lora_einsum.adapter.lora_b.shape
+    )
     X = jax.random.normal(rngs(), (2, 10))
     before_merge = lora_einsum(X)
     lora._merge_lora_einsum_inplace(lora_einsum)
@@ -21,6 +24,7 @@ def test__merge_lora_einsum_inplace():
 
 def test_apply_merge():
     from fabrique.loading import load_model
+
     rngs = nnx.Rngs(89)
     x = jnp.arange(10)[None, :]
     _, model = load_model("gemma-3-1b-it")
@@ -36,7 +40,9 @@ def test_apply_merge():
     assert jnp.all(out_orig.logits == out_lora.logits)
 
     # make non-zero
-    q_einsum_lora.adapter.lora_b = jax.random.normal(rngs(), q_einsum_lora.adapter.lora_b.shape)
+    q_einsum_lora.adapter.lora_b = jax.random.normal(
+        rngs(), q_einsum_lora.adapter.lora_b.shape
+    )
     out_lora_new = model(x)
 
     lora.merge(model)

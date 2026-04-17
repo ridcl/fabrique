@@ -110,6 +110,7 @@ RUN uv pip install jax[cuda]==0.8.1
 FROM build-base AS build-dev
 
 ## Other tools
+RUN curl -fsSL https://claude.ai/install.sh | bash
 
 
 CMD ["echo", "Create!"]

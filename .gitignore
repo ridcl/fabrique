@@ -156,6 +156,12 @@ app.logs
 __MACOSX/
 class_by_href_text/
 
+# reference implementations
+reference/
+
+# tools
+.claude/
+
 # special files
 output/
 _main.py

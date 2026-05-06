@@ -49,9 +49,10 @@ logger = logging.getLogger(__name__)
 DATASET_PATH = "/data/kvp10k-with-images.parquet"
 
 MODEL_ID = "Qwen/Qwen3-VL-4B-Instruct"
-OUTPUT_DIR = "/data/models/kvp10k-qwen3vl-4b"
+# OUTPUT_DIR = "/data/models/kvp10k-qwen3vl-4b"
+OUTPUT_DIR = "/data/models/kvp10k-qwen3vl-4b-retrained"
 # LORA_CKPT_DIR = "/tmp/kvp10k_lora_ckpts"
-LORA_CKPT_DIR = "/data/cache/kvp10k_lora_ckpts"
+LORA_CKPT_DIR = "/data/cache/kvp10k_lora_ckpts_retrained"
 
 BATCH_SIZE = 1
 MAX_SEQ_LEN = 4096
@@ -64,7 +65,7 @@ EVAL_MAX_SAMPLES = 500
 LORA_RANK = 16
 LORA_ALPHA = float(2 * LORA_RANK)
 _LORA_TARGETS = ".*q_proj|.*k_proj|.*gate_proj|.*up_proj|.*down_proj"
-MAX_STEPS = 1_000
+MAX_STEPS = 10_000
 EVAL_EVERY_N_STEPS = 500
 
 RANDOM_SEED = 42
@@ -484,7 +485,7 @@ def train(train_df: pd.DataFrame, eval_df: pd.DataFrame) -> None:
         num_epochs=num_epochs,
     )
     eval_loader = _DataLoader(
-        eval_df.head(200),
+        eval_df.head(20),
         processor,
         config.vision_config,
         batch_size=BATCH_SIZE,

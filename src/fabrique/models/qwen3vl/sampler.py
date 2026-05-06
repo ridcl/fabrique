@@ -1,17 +1,3 @@
-# Copyright 2025 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """Qwen3-VL sampler with image support.
 
 Supports greedy and top-p sampling for both text-only and vision-language
@@ -41,37 +27,18 @@ from collections.abc import Sequence
 from typing import Optional
 
 import flax
-import huggingface_hub
 import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 from flax.nnx import graph, statelib
 from transformers import AutoProcessor
+
 from fabrique.models.qwen3vl import model as model_lib
 from fabrique.models.qwen3vl import params as params_lib
+from fabrique.models.qwen3vl.loading import load_model
 from fabrique.models.qwen3vl.utils import encode_batch
-from fabrique.models.qwen3vl.utils import load_processor
 from fabrique.models.qwen3vl.vision import VisionGridData
-
-
-# ---------------------------------------------------------------------------
-# Model ID / directory resolution
-# ---------------------------------------------------------------------------
-
-
-def resolve_model_dir(model_id_or_dir: str) -> str:
-    """Return a local directory path for the given model ID or local path.
-
-    If ``model_id_or_dir`` is an existing directory it is returned as-is.
-    Otherwise it is treated as a HuggingFace Hub repo ID and the snapshot is
-    downloaded (or retrieved from the local cache) via ``huggingface_hub``.
-    """
-    if os.path.isdir(model_id_or_dir):
-        return model_id_or_dir
-    print(f'Downloading snapshot for "{model_id_or_dir}" from HuggingFace Hub…')
-    return huggingface_hub.snapshot_download(model_id_or_dir)
-
 
 # ---------------------------------------------------------------------------
 # Sampling state
@@ -522,8 +489,10 @@ class Qwen3VLSampler:
 
 def load_sampler(
     model_id_or_dir: str,
-    cache_size: int = 512,
-    dtype: str = "bfloat16",
+    cache_size: int = 4096,
+    dtype: jnp.dtype = jnp.bfloat16,
+    mesh: Optional[jax.sharding.Mesh] = None,
+    config: Optional[model_lib.ModelConfig] = None,
 ) -> Qwen3VLSampler:
     """Load a Qwen3-VL model and return a ready-to-use ``Qwen3VLSampler``.
 
@@ -535,16 +504,9 @@ def load_sampler(
     Returns:
       A ``Qwen3VLSampler`` instance.
     """
-    jax_dtype = jnp.bfloat16 if dtype == "bfloat16" else jnp.float32
-    model_dir = resolve_model_dir(model_id_or_dir)
-    config = model_lib.ModelConfig.qwen3vl_4b()
-
-    with jax.default_device(jax.devices()[0]):
-        model = params_lib.create_model_from_safe_tensors(
-            model_dir, config, mesh=None, dtype=jax_dtype
-        )
-
-    processor = load_processor(model_dir)
+    processor, model = load_model(
+        model_id_or_dir, dtype=dtype, mesh=mesh, config=config
+    )
     return Qwen3VLSampler(model, processor, cache_size=cache_size)
 
 
@@ -561,7 +523,7 @@ def main(
     temperature: float = 1.0,
     top_p: float | None = None,
     cache_size: int = 512,
-    dtype: str = "bfloat16",
+    dtype: jnp.dtype = jnp.bfloat16,
 ) -> str:
     """Run the sampler and return the generated text.
 
@@ -660,5 +622,5 @@ if __name__ == "__main__" and "__file__" in globals():
         temperature=_args.temperature,
         top_p=_args.top_p,
         cache_size=_args.cache_size,
-        dtype=_args.dtype,
+        dtype=jnp.bfloat16 if _args.dtype == "bfloat16" else jnp.bfloat32,
     )

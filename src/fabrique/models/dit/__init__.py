@@ -2,11 +2,11 @@
 
 from fabrique.models.dit import params
 from fabrique.models.dit.model import (
+    MLP,
+    Attention,
     DiT,
     DiTBlock,
     DiTConfig,
-    MLP,
-    Attention,
     PatchEmbed,
     TimestepEmbedding,
     compute_rope,

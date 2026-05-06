@@ -27,13 +27,14 @@ from flax import nnx
 from jax import numpy as jnp
 from jax.interpreters import pxla
 from tunix.generate.mappings import BackendMappingMixin
+from tunix.utils import compat, env_utils
+
 from fabrique.models.qwen3vl.vision import (
     VisionEmbeddings,
     VisionGridData,
     VisionModel,
     VisionModelConfig,
 )
-from tunix.utils import compat, env_utils
 
 env_utils.setup_sharding_environment()
 

@@ -25,18 +25,15 @@ import qwix
 from flax import nnx
 from PIL import Image, ImageDraw
 from tqdm import tqdm
-from fabrique.models.qwen3vl import model as model_lib
-from fabrique.models.qwen3vl import params as params_lib
-from fabrique.models.qwen3vl.sampler import (
-    Qwen3VLSampler,
-    load_sampler,
-    resolve_model_dir,
-)
-from fabrique.models.qwen3vl.utils import encode_messages, load_processor
-from fabrique.models.qwen3vl.vision import VisionGridData
-from fabrique.saving import save_qwen3vl_lora_merged
 from tunix.rl import reshard as reshard_lib
 from tunix.sft import metrics_logger, peft_trainer
+
+from fabrique.models.qwen3vl import model as model_lib
+from fabrique.models.qwen3vl.loading import load_model, resolve_model_dir
+from fabrique.models.qwen3vl.sampler import Qwen3VLSampler, load_sampler
+from fabrique.models.qwen3vl.utils import encode_messages
+from fabrique.models.qwen3vl.vision import VisionGridData
+from fabrique.saving import save_qwen3vl_lora_merged
 from fabrique.utils import show_hbm_usage
 
 logging.basicConfig(level=logging.INFO)
@@ -53,6 +50,8 @@ MODEL_ID = "Qwen/Qwen3-VL-4B-Instruct"
 OUTPUT_DIR = "/data/models/kvp10k-qwen3vl-4b-retrained"
 # LORA_CKPT_DIR = "/tmp/kvp10k_lora_ckpts"
 LORA_CKPT_DIR = "/data/cache/kvp10k_lora_ckpts_retrained"
+
+MESH = jax.make_mesh((1, len(jax.devices())), ("fsdp", "tp"))
 
 BATCH_SIZE = 1
 MAX_SEQ_LEN = 4096
@@ -459,16 +458,18 @@ def train(train_df: pd.DataFrame, eval_df: pd.DataFrame) -> None:
 
     config = model_lib.ModelConfig.qwen3vl_4b()
     config.remat_config = model_lib.RematConfig.BLOCK
-    model_dir = resolve_model_dir(MODEL_ID)
-
-    mesh = jax.make_mesh((1, len(jax.devices())), ("fsdp", "tp"))
-    base_model = params_lib.create_model_from_safe_tensors(
-        model_dir, config, mesh=mesh, dtype=jnp.bfloat16
-    )
+    processor, base_model = load_model(MODEL_ID, mesh=MESH, config=config)
     show_hbm_usage()
 
-    processor = load_processor(model_dir)
-    lora_model = _get_lora_model(base_model, mesh=mesh)
+    # model_dir = resolve_model_dir(MODEL_ID)
+
+    # base_model = params_lib.create_model_from_safe_tensors(
+    #     model_dir, config, mesh=mesh, dtype=jnp.bfloat16
+    # )
+    # show_hbm_usage()
+
+    # processor = load_processor(model_dir)
+    lora_model = _get_lora_model(base_model, mesh=MESH)
     show_hbm_usage()
 
     # TEMP: Visualize before training
@@ -523,13 +524,13 @@ def train(train_df: pd.DataFrame, eval_df: pd.DataFrame) -> None:
     trainer.eval_loss_fn = _loss_fn
 
     logger.info("Starting LoRA fine-tuning for %d steps", MAX_STEPS)
-    with mesh:
+    with MESH:
         trainer.train(train_loader, eval_ds=eval_loader)
 
     logger.info("Saving merged LoRA model to %s", OUTPUT_DIR)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     save_qwen3vl_lora_merged(
-        local_model_path=model_dir,
+        model_id_or_dir=MODEL_ID,
         output_dir=OUTPUT_DIR,
         lora_model=lora_model,
         rank=LORA_RANK,
@@ -546,10 +547,11 @@ def main():
     # jax.config.update('jax_explain_cache_misses', True)
     jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
     train_df, eval_df = load_splits()
+    eval_df = eval_df.head(20)
 
     # --- Evaluate base model ---
     logger.info("Loading base model for evaluation…")
-    sampler = load_sampler(MODEL_ID, cache_size=EVAL_CACHE_SIZE)
+    sampler = load_sampler(MODEL_ID, mesh=MESH, cache_size=EVAL_CACHE_SIZE)
     logger.info(
         "Evaluating base model on %d test samples…", min(EVAL_MAX_SAMPLES, len(eval_df))
     )
@@ -567,7 +569,7 @@ def main():
 
     # --- Evaluate fine-tuned model ---
     logger.info("Loading fine-tuned model for evaluation…")
-    sampler_ft = load_sampler(OUTPUT_DIR, cache_size=EVAL_CACHE_SIZE)
+    sampler_ft = load_sampler(OUTPUT_DIR, mesh=MESH, cache_size=EVAL_CACHE_SIZE)
     metrics_after = evaluate(sampler_ft, eval_df, output_dir="output/ft_model")
     logger.info(
         "Fine-tuned  — F1: %.4f  IoU: %.4f",

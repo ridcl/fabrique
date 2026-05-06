@@ -249,11 +249,11 @@ import gc
 import time
 from typing import Any, List, Optional, Tuple
 
-from absl import logging
-from flax import nnx
 import humanize
 import jax
 import jax.numpy as jnp
+from absl import logging
+from flax import nnx
 from tunix.oss import utils as google_utils
 
 

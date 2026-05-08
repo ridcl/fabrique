@@ -6,6 +6,7 @@ import requests
 from huggingface_hub import snapshot_download
 from PIL import Image
 from transformers import AutoProcessor
+
 from fabrique.models.qwen3vl import model as model_lib
 from fabrique.models.qwen3vl import params as param_lib
 

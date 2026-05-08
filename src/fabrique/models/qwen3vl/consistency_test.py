@@ -38,6 +38,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+
 from fabrique.models.qwen3vl import model as model_lib
 from fabrique.models.qwen3vl import params as params_lib
 from fabrique.models.qwen3vl.model import make_causal_mask_from_positions

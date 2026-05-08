@@ -1,17 +1,3 @@
-# Copyright 2025 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """Fine-tuning Qwen3-VL 4B with PeftTrainer on DocumentVQA (LoRA / QLoRA).
 
 Fine-tunes Qwen/Qwen3-VL-4B-Instruct on the HuggingFaceM4/DocumentVQA
@@ -50,14 +36,15 @@ import qwix
 from flax import nnx
 from grain import python as grain
 from transformers import AutoProcessor
+from tunix.rl import reshard as reshard_lib
+from tunix.sft import metrics_logger, peft_trainer
+from tunix.sft.utils import show_hbm_usage
+
 from fabrique.models.qwen3vl import model as model_lib
 from fabrique.models.qwen3vl import params as params_lib
 from fabrique.models.qwen3vl.sampler import Qwen3VLSampler
 from fabrique.models.qwen3vl.utils import EncodedBatch, encode_messages, load_processor
 from fabrique.models.qwen3vl.vision import VisionGridData
-from tunix.rl import reshard as reshard_lib
-from tunix.sft import metrics_logger, peft_trainer
-from tunix.sft.utils import show_hbm_usage
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger().setLevel(logging.INFO)

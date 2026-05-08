@@ -28,7 +28,6 @@ from flax import nnx
 
 from fabrique.models.dit.model import DiT, compute_rope
 
-
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -114,14 +113,12 @@ def fm_loss(
     # Linear interpolant and constant-velocity target
     t_bc = t[:, None, None, None].astype(dtype)
     x_t = (1.0 - t_bc) * x0 + t_bc * images
-    v_target = images - x0                        # [B, H, W, C]
+    v_target = images - x0  # [B, H, W, C]
 
-    v_pred = model(x_t, t, cos, sin)              # [B, H, W, C]
+    v_pred = model(x_t, t, cos, sin)  # [B, H, W, C]
 
     # Accumulate MSE in float32 to avoid bfloat16 underflow in the squared term
-    return jnp.mean(
-        (v_pred.astype(jnp.float32) - v_target.astype(jnp.float32)) ** 2
-    )
+    return jnp.mean((v_pred.astype(jnp.float32) - v_target.astype(jnp.float32)) ** 2)
 
 
 # ---------------------------------------------------------------------------
@@ -215,9 +212,7 @@ class FlowMatchingTrainer:
         Returns:
           Scalar loss (float32).
         """
-        return self._eval_step_jit(
-            self.model, images, self.cos, self.sin, key
-        )
+        return self._eval_step_jit(self.model, images, self.cos, self.sin, key)
 
     def train(
         self,
@@ -257,7 +252,7 @@ class FlowMatchingTrainer:
             step += 1
 
             if step % cfg.log_every == 0:
-                window = losses[-cfg.log_every:]
+                window = losses[-cfg.log_every :]
                 avg_loss = sum(window) / len(window)
                 elapsed = time.perf_counter() - window_start
                 ms_per_step = elapsed * 1000 / cfg.log_every
@@ -307,7 +302,11 @@ class FlowMatchingTrainer:
         ) -> jax.Array:
             def loss_fn(model):
                 return fm_loss(
-                    model, images, cos, sin, key,
+                    model,
+                    images,
+                    cos,
+                    sin,
+                    key,
                     logit_mean=logit_mean,
                     logit_std=logit_std,
                 )
@@ -332,7 +331,11 @@ class FlowMatchingTrainer:
             key: jax.Array,
         ) -> jax.Array:
             return fm_loss(
-                model, images, cos, sin, key,
+                model,
+                images,
+                cos,
+                sin,
+                key,
                 logit_mean=logit_mean,
                 logit_std=logit_std,
             )

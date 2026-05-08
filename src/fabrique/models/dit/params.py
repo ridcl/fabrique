@@ -130,7 +130,7 @@ def _preprocess(params: dict) -> dict:
         w = params[key]
         if w.ndim == 5:
             # [in_ch, temporal, ph, pw, hidden] → mean over axis 1
-            w = w.mean(axis=1)                  # [in_ch, ph, pw, hidden]
+            w = w.mean(axis=1)  # [in_ch, ph, pw, hidden]
             in_ch, ph, pw, hidden = w.shape
             params[key] = w.reshape(in_ch * ph * pw, hidden)
     return params

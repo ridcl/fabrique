@@ -21,12 +21,15 @@ by model.safetensors.index.json; this module handles both cases.
 
 import json
 import os
+import re
 import shutil
 from typing import Any, Callable
 
-from flax import nnx
 import jax.numpy as jnp
 import safetensors.numpy as safe_np
+from flax import nnx
+
+from fabrique.models.qwen3vl.loading import resolve_model_dir
 
 
 def _join_path(path) -> str:
@@ -181,15 +184,17 @@ _QWEN3_TRANSPOSE_RULES: dict[str, tuple[int, ...]] = {
 
 
 def save_qwen3vl_lora_merged(
-    local_model_path: str,
+    model_id_or_dir: str,
     output_dir: str,
     lora_model: Any,
     rank: int,
     alpha: float,
 ) -> None:
     """Save a Qwen3-VL LoRA model with weights merged into the base checkpoint."""
+    if re.match(r"Qwen/Qwen3-VL-.*", model_id_or_dir):
+        model_id_or_dir = resolve_model_dir(model_id_or_dir)
     save_lora_merged_model_as_safetensors(
-        local_model_path=local_model_path,
+        local_model_path=model_id_or_dir,
         output_dir=output_dir,
         lora_model=lora_model,
         rank=rank,

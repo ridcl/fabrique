@@ -38,16 +38,15 @@ import random
 import time
 from collections.abc import Callable, Iterator
 
+import huggingface_hub
 import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 from PIL import Image
 
-import huggingface_hub
-
 from fabrique.models.dit.model import DiT, compute_rope, dit_qwen
-from fabrique.trainers.flow import FMConfig, FlowMatchingTrainer
+from fabrique.trainers.flow import FlowMatchingTrainer, FMConfig
 from fabrique.utils import show_hbm_usage
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -60,8 +59,8 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # --- Image / model ---
-IMAGE_SIZE: int = 64         # spatial resolution fed to the model
-PATCH_SIZE: int = 16         # matches Qwen3-VL native; yields (IS/PS)² = 16 tokens
+IMAGE_SIZE: int = 64  # spatial resolution fed to the model
+PATCH_SIZE: int = 16  # matches Qwen3-VL native; yields (IS/PS)² = 16 tokens
 IN_CHANNELS: int = 3
 MODEL_ID: str = "Qwen/Qwen3-VL-4B-Instruct"
 
@@ -75,7 +74,7 @@ DATASET_SPLIT: str = "train"
 SHUFFLE_BUFFER: int = 10_000
 
 # --- Training ---
-BATCH_SIZE: int = 32   # TODO: use fsdp to train on 2 GPUs in parallel
+BATCH_SIZE: int = 32  # TODO: use fsdp to train on 2 GPUs in parallel
 MAX_STEPS: int = 500_000
 LEARNING_RATE: float = 1e-4
 WARMUP_STEPS: int = 2_000
@@ -88,16 +87,17 @@ LOGIT_STD: float = 1.0
 
 # --- Logging / outputs ---
 LOG_EVERY: int = 200
-SAMPLE_EVERY: int = 1_000    # generate image grid
-SAVE_EVERY: int = 1_000     # orbax checkpoint
-NUM_SAMPLES: int = 16        # images per sample grid (must be a perfect square)
-SAMPLER_STEPS: int = 50      # Euler steps for generation
+SAMPLE_EVERY: int = 1_000  # generate image grid
+SAVE_EVERY: int = 1_000  # orbax checkpoint
+NUM_SAMPLES: int = 16  # images per sample grid (must be a perfect square)
+SAMPLER_STEPS: int = 50  # Euler steps for generation
 OUT_DIR: str = "/data/flow/dit_imagenet32"
 
 
 # ---------------------------------------------------------------------------
 # Image preprocessing
 # ---------------------------------------------------------------------------
+
 
 def preprocess_image(img: Image.Image, size: int) -> np.ndarray:
     """Centre-crop, resize, normalise a PIL image → float32 [H, W, C] in [-1, 1]."""
@@ -113,9 +113,11 @@ def preprocess_image(img: Image.Image, size: int) -> np.ndarray:
 # Dataset / data iterators
 # ---------------------------------------------------------------------------
 
+
 def _hf_image_iter(dataset_id: str, split: str, shuffle_buffer: int):
     """Yield preprocessed images one at a time from a HuggingFace dataset."""
     import datasets as hf_datasets
+
     ds = hf_datasets.load_dataset(
         dataset_id, split=split, streaming=True, trust_remote_code=True
     )
@@ -131,9 +133,7 @@ def _hf_image_iter(dataset_id: str, split: str, shuffle_buffer: int):
 def _local_image_iter(root: str, shuffle_buffer: int):
     """Yield preprocessed images scanned recursively from a local directory."""
     exts = {".jpg", ".jpeg", ".png", ".webp"}
-    paths = [
-        p for p in pathlib.Path(root).rglob("*") if p.suffix.lower() in exts
-    ]
+    paths = [p for p in pathlib.Path(root).rglob("*") if p.suffix.lower() in exts]
     random.shuffle(paths)
     log.info("Found %d images under %s", len(paths), root)
     while True:
@@ -166,9 +166,11 @@ def make_data_iter(dtype=jnp.bfloat16) -> Iterator[jax.Array]:
         gen = _local_image_iter(DATASET_DIR, SHUFFLE_BUFFER)
     elif DATASET_ID is not None:
         log.info("Streaming dataset %s (split=%s)", DATASET_ID, DATASET_SPLIT)
+
         def _cycling_gen():
             while True:
                 yield from _hf_image_iter(DATASET_ID, DATASET_SPLIT, SHUFFLE_BUFFER)
+
         gen = _cycling_gen()
     else:
         raise ValueError("Set either DATASET_ID or DATASET_DIR.")
@@ -178,6 +180,7 @@ def make_data_iter(dtype=jnp.bfloat16) -> Iterator[jax.Array]:
 # ---------------------------------------------------------------------------
 # Euler sampler
 # ---------------------------------------------------------------------------
+
 
 def make_euler_sampler(
     model: DiT,
@@ -226,15 +229,18 @@ def make_euler_sampler(
 # Utilities: image grid, checkpointing
 # ---------------------------------------------------------------------------
 
+
 def save_image_grid(images: np.ndarray, path: str) -> None:
     """Save [B, H, W, C] float32 array in [0,1] as a square PNG grid."""
     B, H, W, C = images.shape
-    n = int(B ** 0.5)
+    n = int(B**0.5)
     assert n * n == B, f"NUM_SAMPLES={B} must be a perfect square"
     grid = np.zeros((H * n, W * n, C), dtype=np.uint8)
     for i, img in enumerate(images):
         r, c = divmod(i, n)
-        grid[r * H:(r + 1) * H, c * W:(c + 1) * W] = (img * 255).clip(0, 255).astype(np.uint8)
+        grid[r * H : (r + 1) * H, c * W : (c + 1) * W] = (
+            (img * 255).clip(0, 255).astype(np.uint8)
+        )
     os.makedirs(os.path.dirname(path), exist_ok=True)
     Image.fromarray(grid).save(path)
     log.info("Saved sample grid → %s", path)
@@ -262,6 +268,7 @@ def save_checkpoint(
 ) -> None:
     """Save model weights and optimiser state via orbax."""
     import orbax.checkpoint as ocp
+
     ckpt_dir = os.path.join(ckpt_root, f"step_{step:08d}")
     checkpointer = ocp.StandardCheckpointer()
     checkpointer.save(
@@ -272,11 +279,10 @@ def save_checkpoint(
     log.info("Checkpoint saved → %s", ckpt_dir)
 
 
-def restore_checkpoint(
-    model: DiT, optimizer: nnx.Optimizer, ckpt_dir: str
-) -> None:
+def restore_checkpoint(model: DiT, optimizer: nnx.Optimizer, ckpt_dir: str) -> None:
     """Restore model weights and optimiser state in-place."""
     import orbax.checkpoint as ocp
+
     checkpointer = ocp.StandardCheckpointer()
     abstract_model = nnx.eval_shape(lambda: model)
     abstract_opt = nnx.eval_shape(lambda: optimizer)
@@ -294,6 +300,7 @@ def restore_checkpoint(
 # Model factory
 # ---------------------------------------------------------------------------
 
+
 def resolve_model_dir(model_id: str) -> str:
     """Return a local directory for *model_id*, downloading via HF Hub if needed."""
     if os.path.isdir(model_id):
@@ -305,10 +312,15 @@ def resolve_model_dir(model_id: str) -> str:
 def make_model(model_dir: str) -> DiT:
     """Warm-start a DiT from the Qwen3-VL vision encoder weights."""
     from fabrique.models.dit import params as dit_params
+
     config = dit_qwen()  # patch_size=16 and in_channels=3 are already the defaults
     log.info(
         "Loading DiT blocks from %s  (depth=%d hidden=%d heads=%d patch=%d)",
-        model_dir, config.depth, config.hidden_size, config.num_heads, config.patch_size,
+        model_dir,
+        config.depth,
+        config.hidden_size,
+        config.num_heads,
+        config.patch_size,
     )
     model = dit_params.load_from_qwen_vl(model_dir, config, dtype=jnp.bfloat16)
     n_params = sum(p.size for p in jax.tree.leaves(nnx.state(model)))
@@ -319,6 +331,7 @@ def make_model(model_dir: str) -> DiT:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -333,7 +346,9 @@ def main() -> None:
     _cfg = model.config
     head_dim = _cfg.hidden_size // _cfg.num_heads
     patch_size = model.config.patch_size
-    cos, sin = compute_rope(IMAGE_SIZE // patch_size, IMAGE_SIZE // patch_size, head_dim)
+    cos, sin = compute_rope(
+        IMAGE_SIZE // patch_size, IMAGE_SIZE // patch_size, head_dim
+    )
 
     # ── Trainer ──────────────────────────────────────────────────────────────
     fm_cfg = FMConfig(
@@ -349,7 +364,9 @@ def main() -> None:
         eval_every=SAMPLE_EVERY,
         max_steps=MAX_STEPS,
     )
-    trainer = FlowMatchingTrainer(model, fm_cfg, image_shape=(IMAGE_SIZE, IMAGE_SIZE, IN_CHANNELS))
+    trainer = FlowMatchingTrainer(
+        model, fm_cfg, image_shape=(IMAGE_SIZE, IMAGE_SIZE, IN_CHANNELS)
+    )
 
     # ── Resume from checkpoint if one exists ─────────────────────────────────
     start_step = 0
@@ -379,7 +396,9 @@ def main() -> None:
             save_checkpoint(model, trainer.optimizer, step, ckpt_dir)
 
     # ── Data iterator ────────────────────────────────────────────────────────
-    log.info("Building data pipeline (IMAGE_SIZE=%d, BATCH_SIZE=%d)…", IMAGE_SIZE, BATCH_SIZE)
+    log.info(
+        "Building data pipeline (IMAGE_SIZE=%d, BATCH_SIZE=%d)…", IMAGE_SIZE, BATCH_SIZE
+    )
     data = make_data_iter(dtype=jnp.bfloat16)
 
     # ── Train ────────────────────────────────────────────────────────────────

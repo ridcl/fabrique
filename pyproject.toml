@@ -5,7 +5,8 @@ description = "Foundation for modern ML research"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "google-tunix[prod]>=0.1.6",
+    "google-tunix[prod]==0.1.6",
+    "flax==0.12.6",
     "optax>=0.2.5",
     "multimethod>=2.0",
 ]

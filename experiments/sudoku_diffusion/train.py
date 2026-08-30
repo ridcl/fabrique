@@ -48,13 +48,13 @@ log = logging.getLogger(__name__)
 
 # --- Experiment knobs ------------------------------------------------------
 SEED = 0
-BATCH_SIZE = 128
-MAX_STEPS = 50_000
+BATCH_SIZE = 256
+MAX_STEPS = 20_000
 LOG_EVERY = 100
 EVAL_EVERY = 1_000
 NUM_EVAL_PUZZLES = 64
-NUM_CLUES = 45  # easier puzzles (more givens) -> visible progress sooner
-MODEL_OUTPUT_DIR = "/data/sudoku_diffusion"
+NUM_CLUES = 15  # easier puzzles (more givens) -> visible progress sooner
+MODEL_OUTPUT_DIR = "/data/sudoku_diffusion_15c"
 
 
 def make_eval_set(rng: np.random.Generator):

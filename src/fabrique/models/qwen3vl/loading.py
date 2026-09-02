@@ -1,6 +1,5 @@
 import json
 import os
-from typing import Optional, Union
 
 import huggingface_hub
 import jax
@@ -80,15 +79,53 @@ def _load_processor(model_dir: str) -> AutoProcessor:
     from transformers.models.qwen2_vl.processing_qwen2_vl import Qwen2VLProcessor
 
     tok = AutoTokenizer.from_pretrained(model_dir)
-    img_proc = Qwen2VLImageProcessor.from_pretrained(model_dir)
 
-    # The chat template lives in tokenizer_config.json; pass it explicitly so
-    # that processor.apply_chat_template works correctly.
-    tok_cfg_path = os.path.join(model_dir, "tokenizer_config.json")
+    # Image-processor settings live in preprocessor_config.json on older
+    # checkpoints, but recent transformers writes them nested under the
+    # "image_processor" key of processor_config.json.  ``from_pretrained`` only
+    # looks for the former, so for such checkpoints it silently falls back to
+    # library defaults -- notably max_pixels=1003520 instead of the value the
+    # model was trained/served with, which downscales large pages.
+    img_proc = None
+    proc_cfg_path = os.path.join(model_dir, "processor_config.json")
+    if not os.path.exists(
+        os.path.join(model_dir, "preprocessor_config.json")
+    ) and os.path.exists(proc_cfg_path):
+        with open(proc_cfg_path) as f:
+            nested = json.load(f).get("image_processor")
+        if nested:
+            # Qwen2VLImageProcessor.from_dict ignores size.{shortest,longest}_edge
+            # and falls back to the default min_pixels/max_pixels unless they are
+            # given explicitly, so map them across by hand.
+            size = nested.get("size") or {}
+            if "shortest_edge" in size and "min_pixels" not in nested:
+                nested["min_pixels"] = size["shortest_edge"]
+            if "longest_edge" in size and "max_pixels" not in nested:
+                nested["max_pixels"] = size["longest_edge"]
+            img_proc = Qwen2VLImageProcessor.from_dict(nested)
+    if img_proc is None:
+        img_proc = Qwen2VLImageProcessor.from_pretrained(model_dir)
+
+    # The chat template lives either in tokenizer_config.json (older
+    # checkpoints) or in a standalone chat_template.jinja (what recent
+    # transformers versions write, e.g. Unsloth-exported models).  Check both
+    # so that processor.apply_chat_template works either way.
     chat_template = None
+    tok_cfg_path = os.path.join(model_dir, "tokenizer_config.json")
     if os.path.exists(tok_cfg_path):
         with open(tok_cfg_path) as f:
             chat_template = json.load(f).get("chat_template")
+    if chat_template is None:
+        for name in ("chat_template.jinja", "chat_template.json"):
+            path = os.path.join(model_dir, name)
+            if not os.path.exists(path):
+                continue
+            with open(path) as f:
+                raw = f.read()
+            chat_template = (
+                json.loads(raw).get("chat_template") if name.endswith(".json") else raw
+            )
+            break
 
     return Qwen2VLProcessor(
         image_processor=img_proc,
@@ -119,8 +156,8 @@ def _resolve_model_config(model_id_or_dir: str):
 def load_model(
     model_id_or_dir: str,
     dtype: jnp.dtype = jnp.bfloat16,
-    mesh: Optional[jax.sharding.Mesh] = None,
-    config: Optional[model_lib.ModelConfig] = None,
+    mesh: jax.sharding.Mesh | None = None,
+    config: model_lib.ModelConfig | None = None,
 ) -> tuple[Qwen2VLProcessor, model_lib.Qwen3VL]:
     """Load a Qwen3-VL processor and model.
 

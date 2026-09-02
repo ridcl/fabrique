@@ -114,3 +114,28 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 
 
 CMD ["echo", "Create!"]
+
+
+###########################################################
+# Same as build-dev, plus PyTorch, for cross-framework consistency checks
+# (src/fabrique/models/qwen3vl/consistency_test.py, tests/qwen3vl_vision_parity.py).
+# Select it from .devcontainer/torch/devcontainer.json.
+#
+# The `crosscheck` group pins the *CPU* build of torch on purpose: the CUDA
+# build depends on nvidia-*-cu13 wheels which install over JAX's nvidia-*-cu12
+# ones at the same paths (libcudnn.so.9 among them), leaving JAX loading a
+# CUDA-13 cuDNN.  That fails every cuDNN flash-attention shape check at runtime
+# and silently falls back to the XLA kernel, which materialises an O(seq_len^2)
+# logits buffer.  The CPU build has no nvidia dependencies, and the consistency
+# checks run on CPU regardless (loading two copies of a model is memory-bound).
+FROM build-dev AS build-dev-torch
+
+# ARG scope does not cross FROM, so USERNAME has to be redeclared here
+# (BUILD_DIR is an ENV and does carry over).
+ARG USERNAME=devpod
+
+WORKDIR "${BUILD_DIR}"
+RUN uv sync --active --group crosscheck
+WORKDIR /home/${USERNAME}
+
+CMD ["echo", "Create (with torch)!"]

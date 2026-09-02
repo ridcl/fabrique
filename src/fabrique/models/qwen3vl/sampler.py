@@ -24,7 +24,6 @@ import argparse
 import io
 import os
 from collections.abc import Sequence
-from typing import Optional
 
 import flax
 import jax
@@ -35,7 +34,6 @@ from flax.nnx import graph, statelib
 from transformers import AutoProcessor
 
 from fabrique.models.qwen3vl import model as model_lib
-from fabrique.models.qwen3vl import params as params_lib
 from fabrique.models.qwen3vl.loading import load_model
 from fabrique.models.qwen3vl.utils import encode_batch
 from fabrique.models.qwen3vl.vision import VisionGridData
@@ -377,8 +375,8 @@ class Qwen3VLSampler:
         max_new_tokens: int = 100,
         images=None,  # PIL Image, list of Images, or None
         temperature: float = 1.0,
-        top_p: Optional[float] = None,
-        top_k: Optional[int] = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
         eos_tokens: Sequence[int] | None = None,
         forbidden_tokens: Sequence[int] | None = None,
         seed: int = 0,
@@ -414,7 +412,9 @@ class Qwen3VLSampler:
 
         # --- Prepare inputs ---
         image_lists = (
-            [[img] for img in images] if images is not None else [[] for _ in prompts]
+            [list(img) if isinstance(img, (list, tuple)) else [img] for img in images]
+            if images is not None
+            else [[] for _ in prompts]
         )
         batch = encode_batch(
             self._processor,
@@ -462,7 +462,7 @@ class Qwen3VLSampler:
             else eos_id
         )
         outputs = []
-        for i, token_buffer in enumerate(np.array(state.token_buffer)):
+        for _i, token_buffer in enumerate(np.array(state.token_buffer)):
             start = 0 if echo else seq_len
             gen_tokens = token_buffer[seq_len:]
             end = seq_len
@@ -491,8 +491,8 @@ def load_sampler(
     model_id_or_dir: str,
     cache_size: int = 4096,
     dtype: jnp.dtype = jnp.bfloat16,
-    mesh: Optional[jax.sharding.Mesh] = None,
-    config: Optional[model_lib.ModelConfig] = None,
+    mesh: jax.sharding.Mesh | None = None,
+    config: model_lib.ModelConfig | None = None,
 ) -> Qwen3VLSampler:
     """Load a Qwen3-VL model and return a ready-to-use ``Qwen3VLSampler``.
 

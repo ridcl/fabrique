@@ -128,14 +128,33 @@ def load_models(
 ) -> tuple[model_lib.Qwen3VL, Qwen3VLForConditionalGeneration]:
     """Load JAX and PyTorch models from the same safetensors checkpoint."""
     model_dir = resolve_model_dir(model_id_or_dir)
+
+    # Checkpoints saved by transformers >= 5 store rope settings under
+    # ``rope_parameters``, but older Qwen3VLTextRotaryEmbedding reads
+    # ``rope_scaling`` and crashes on None.  Mirror the key across so that
+    # newer checkpoints load on older transformers.
+    from transformers import AutoConfig
+
+    hf_config = AutoConfig.from_pretrained(model_dir)
+    text_config = getattr(hf_config, "text_config", hf_config)
+    if getattr(text_config, "rope_scaling", None) is None:
+        rope_parameters = getattr(text_config, "rope_parameters", None)
+        if rope_parameters is not None:
+            text_config.rope_scaling = dict(rope_parameters)
+
     pt_model = Qwen3VLForConditionalGeneration.from_pretrained(
         model_dir,
+        config=hf_config,
         torch_dtype=pt_dtype,
         device_map=pt_device,
         attn_implementation="eager",
     )
     pt_model.eval()
 
+    # `dtype` below sets only the *parameter* dtype; the modules read their
+    # compute dtype from config.param_dtype (default bfloat16).  Both must be set
+    # or --dtype float32 silently compares bf16 arithmetic against torch fp32.
+    config.param_dtype = jax_dtype
     with jax.default_device(jax.devices()[0]):
         jax_model = params_lib.create_model_from_safe_tensors(
             model_dir, config, mesh=None, dtype=jax_dtype
@@ -427,8 +446,12 @@ def compare_layerwise(
     )
     print("-" * 65)
 
+    print(
+        f"comparing {len(jax_model.layers)} JAX layers "
+        f"vs {len(tf_lm.layers)} PyTorch layers"
+    )
     for layer_idx, (jax_layer, pt_layer) in enumerate(
-        zip(jax_model.layers, tf_lm.layers)
+        zip(jax_model.layers, tf_lm.layers, strict=True)
     ):
         # JAX forward (no padding mask — Qwen3-VL uses only causal mask)
         _, x = jax_layer(x, positions_jax, None, causal_mask_jax)

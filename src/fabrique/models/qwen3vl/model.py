@@ -16,7 +16,6 @@
 
 import dataclasses
 import enum
-from typing import Tuple
 
 import flax
 import jax
@@ -34,6 +33,7 @@ from fabrique.models.qwen3vl.vision import (
     VisionGridData,
     VisionModel,
     VisionModelConfig,
+    attention_impl_kwargs,
 )
 
 env_utils.setup_sharding_environment()
@@ -54,19 +54,19 @@ class RematConfig(enum.Enum):
 class ShardingConfig:
     """Sharding configuration for Qwen3 model."""
 
-    emb_vd: Tuple[str | None, ...]
-    emb_dv: Tuple[str | None, ...]
-    q_weight_dnh: Tuple[str | None, ...]
-    kv_weight_dnh: Tuple[str | None, ...]
-    o_weight_nhd: Tuple[str | None, ...]
-    ffw_weight_df: Tuple[str | None, ...]
-    ffw_weight_fd: Tuple[str | None, ...]
-    rms_norm_weight: Tuple[str | None, ...]
-    act_btd: Tuple[str | None, ...]
-    act_btf: Tuple[str | None, ...]
-    act_btnh: Tuple[str | None, ...]
-    exp_weight_cdf: Tuple[str | None, ...]
-    exp_weight_cfd: Tuple[str | None, ...]
+    emb_vd: tuple[str | None, ...]
+    emb_dv: tuple[str | None, ...]
+    q_weight_dnh: tuple[str | None, ...]
+    kv_weight_dnh: tuple[str | None, ...]
+    o_weight_nhd: tuple[str | None, ...]
+    ffw_weight_df: tuple[str | None, ...]
+    ffw_weight_fd: tuple[str | None, ...]
+    rms_norm_weight: tuple[str | None, ...]
+    act_btd: tuple[str | None, ...]
+    act_btf: tuple[str | None, ...]
+    act_btnh: tuple[str | None, ...]
+    exp_weight_cdf: tuple[str | None, ...]
+    exp_weight_cfd: tuple[str | None, ...]
 
     @staticmethod
     def get_default_sharding(is_sampling: bool = False):
@@ -235,7 +235,7 @@ class ModelConfig:
         )
 
 
-def shard(x: jnp.ndarray, s: Tuple[str, ...]):
+def shard(x: jnp.ndarray, s: tuple[str, ...]):
     mesh = pxla.thread_resources.env.physical_mesh
     if mesh.empty or jax.devices()[0].platform == "cpu":
         return x
@@ -253,7 +253,7 @@ class Einsum(nnx.Module):
         shape: flax.typing.Shape,
         *,
         rngs: nnx.Rngs,
-        sharding: Tuple[str | None, ...],
+        sharding: tuple[str | None, ...],
         param_dtype: jnp.dtype = jnp.bfloat16,
     ):
         self.einsum_str = einsum_str
@@ -508,10 +508,16 @@ def make_causal_mask_from_positions(
       Boolean mask of shape [B, L, L].  True means the query can attend to the
       key; False means the key is masked out.
     """
-    # [B, L, 1] and [B, 1, L] broadcast to [B, L, L]
-    query_pos = text_positions[:, :, None]  # [B, L, 1]
-    key_pos = text_positions[:, None, :]  # [B, 1, L]
-    mask = key_pos <= query_pos  # [B, L, L]
+    # Causality is by *sequence index*, not by M-RoPE position.  Comparing
+    # t-axis positions would let every vision token of an image attend to every
+    # other one (they share a single t value), i.e. bidirectional attention
+    # inside the image.  HF's create_causal_mask uses `cache_position` (a plain
+    # arange) for the causal comparison and takes `position_ids` only to detect
+    # packed-sequence format, so the model is trained strictly causally.
+    batch_size, seq_len = text_positions.shape
+    idx = jnp.arange(seq_len)
+    mask = idx[None, None, :] <= idx[None, :, None]  # [1, L, L]
+    mask = jnp.broadcast_to(mask, (batch_size, seq_len, seq_len))
     if padding_mask is not None:
         mask = mask & padding_mask[:, None, :].astype(jnp.bool_)
     return mask
@@ -649,10 +655,18 @@ class Attention(nnx.Module):
             )
             key_proj = jax.lax.dynamic_update_slice(cache["k"], key_proj, slice_indices)
 
-        # GQA flash attention: query [B,T,N,H], key/value [B,S,K,H], mask [B,1,T,S]
+        # GQA attention: query [B,T,N,H], key/value [B,S,K,H], mask [B,1,T,S].
+        # attention_impl_kwargs() asks for the cuDNN flash kernel where it is
+        # usable; the default would silently pick the XLA reference kernel, which
+        # materialises an O(T*S) logits buffer per head.
         mask = jnp.expand_dims(attn_mask, -3) if attn_mask is not None else None
         qkv = jax.nn.dot_product_attention(
-            query_proj, key_proj, value_proj, mask=mask, scale=self.scale
+            query_proj,
+            key_proj,
+            value_proj,
+            mask=mask,
+            scale=self.scale,
+            **attention_impl_kwargs(query_proj.dtype),
         )
 
         outputs = self.o_proj(qkv)
@@ -850,7 +864,14 @@ class Qwen3VL(BackendMappingMixin, nnx.Module):
                 param_dtype=config.param_dtype,
             )
         self.visual = (
-            VisionModel(self.config.vision_config, rngs=rngs)
+            VisionModel(
+                self.config.vision_config,
+                # Without these the tower falls back to its bfloat16 defaults and
+                # silently ignores the model's configured dtype.
+                dtype=config.param_dtype,
+                param_dtype=config.param_dtype,
+                rngs=rngs,
+            )
             if self.config.vision_config
             else None
         )
@@ -863,10 +884,16 @@ class Qwen3VL(BackendMappingMixin, nnx.Module):
         v = jnp.zeros(shape, dtype=dtype)
         end_index = jnp.zeros((batch_size,), dtype=jnp.int32)
         # Jax array is immutable, so updates to each layer creates new arrays.
-        return {
+        cache: Cache = {
             f"layer_{i}": {"k": k, "v": v, "end_index": end_index}
             for i in range(config.num_layers)
         }
+        # Which cache slots hold a real (non-padding) token.  Prompts are
+        # left-padded for generation, so without this the decode step would
+        # attend to the padding slots written during prefill.  Shared by all
+        # layers, hence stored once at the top level rather than per layer.
+        cache["valid_mask"] = jnp.zeros((batch_size, cache_size), dtype=jnp.bool_)
+        return cache
 
     def __call__(
         self,
@@ -913,25 +940,47 @@ class Qwen3VL(BackendMappingMixin, nnx.Module):
         # size, so the key axis of the attention score matrix is [B, heads, L,
         # cache_size] rather than [B, heads, L, L].  Extend the causal mask to
         # cover the cache key dimension.
+        new_valid_mask = None
         if cache is not None:
-            first_layer_cache = next(iter(cache.values()))
+            first_layer_cache = cache["layer_0"]
             cache_size = first_layer_cache["k"].shape[1]
             seq_len_q = causal_mask.shape[1]
+            valid_mask = cache.get("valid_mask")  # [B, cache_size]
+            cache_pos = jnp.arange(cache_size)  # [cache_size]
             if seq_len_q == 1:
-                # Decode step: attend to all filled cache slots (0..end_index inclusive,
-                # since Attention.block writes the new token before computing attention).
+                # Decode step: attend to filled cache slots 0..end_index inclusive
+                # (Attention.block writes the new token before computing attention),
+                # but *only* those holding a real token.  The prompt is left-padded,
+                # so slots below the first real token contain garbage KV entries;
+                # attending to them silently corrupts generation after a few steps.
                 end_index = first_layer_cache["end_index"][0]  # scalar
-                cache_pos = jnp.arange(cache_size)  # [cache_size]
-                causal_mask = (cache_pos[None, None, :] <= end_index).astype(jnp.bool_)
+                written_now = cache_pos[None, :] == end_index  # [1, cache_size]
+                if valid_mask is not None:
+                    new_valid_mask = valid_mask | written_now
+                else:
+                    new_valid_mask = None
+                filled = cache_pos[None, None, :] <= end_index
                 causal_mask = jnp.broadcast_to(
-                    causal_mask, (input_tokens.shape[0], 1, cache_size)
+                    filled, (input_tokens.shape[0], 1, cache_size)
                 )
+                if new_valid_mask is not None:
+                    causal_mask = causal_mask & new_valid_mask[:, None, :]
             else:
                 # Prefill: standard causal mask padded to cache_size with False so that
-                # empty slots beyond the prompt length are blocked.
+                # empty slots beyond the prompt length are blocked.  Record which of
+                # the written slots are real so the decode steps can mask the rest.
                 pad_len = cache_size - causal_mask.shape[-1]
                 if pad_len > 0:
                     causal_mask = jnp.pad(causal_mask, [(0, 0), (0, 0), (0, pad_len)])
+                if valid_mask is not None:
+                    real = (
+                        padding_mask.astype(jnp.bool_)
+                        if padding_mask is not None
+                        else jnp.ones((input_tokens.shape[0], seq_len_q), jnp.bool_)
+                    )
+                    new_valid_mask = (cache_pos[None, :] < seq_len_q) & jnp.pad(
+                        real, [(0, 0), (0, max(pad_len, 0))]
+                    )[:, :cache_size]
 
         vision_embeds = None
         if self.config.vision_config and pixel_values is not None:
@@ -956,12 +1005,19 @@ class Qwen3VL(BackendMappingMixin, nnx.Module):
             x = jax.vmap(_inject)(x, input_tokens, vision_embeds.tokens)
 
         deepstack = vision_embeds.deepstack if vision_embeds else ()
-        deepstack_indexes = (
-            self.config.vision_config.deepstack_visual_indexes
-            if self.config.vision_config
-            else ()
-        )
-        deepstack_map = dict(zip(deepstack_indexes, deepstack))
+        # `deepstack_visual_indexes` (e.g. (5, 11, 17)) selects the *vision tower*
+        # layers the features are read from -- that selection happens inside
+        # VisionModel.  On the LLM side HF injects the j-th feature into decoder
+        # layer j (`layer_idx in range(len(deepstack_visual_embeds))`), i.e.
+        # layers 0, 1, 2 -- not back into layers 5/11/17.
+        # `deepstack_visual_indexes` (5/11/17) selects the *vision tower* layers
+        # the features are read from; that happens inside VisionModel.  On the LLM
+        # side the j-th feature goes into decoder layer j -- layers 0/1/2 -- which
+        # is what both transformers (`layer_idx in range(len(embeds))`) and vLLM do.
+        # Confirmed by teacher-forced agreement with this checkpoint's vLLM output
+        # over 8434 token positions: 96.9% here vs 95.7% when injecting at
+        # 5/11/17, better on every document (tests/qwen3vl_teacher_forcing_parity.py).
+        deepstack_map = dict(enumerate(deepstack))
         for i, layer in enumerate(self.layers):
             layer_name = f"layer_{i}"
             layer_cache = cache[layer_name] if cache else None
@@ -975,6 +1031,8 @@ class Qwen3VL(BackendMappingMixin, nnx.Module):
                 new_cache[layer_name] = (
                     layer_cache  # pytype: disable=container-type-mismatch
                 )
+                if new_valid_mask is not None:
+                    new_cache["valid_mask"] = new_valid_mask
             if i in deepstack_map and visual_mask is not None:
                 x = self._apply_deepstack(x, visual_mask, deepstack_map[i])
 

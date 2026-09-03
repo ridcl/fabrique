@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
+import functools
 from collections.abc import Sequence
-from typing import Optional
 
 import jax
 import numpy as np
@@ -26,7 +26,7 @@ class VisionEmbeddings:
     deepstack: tuple[jax.Array, ...] = ()
 
     @classmethod
-    def concatenate(cls, embeds: Sequence["VisionEmbeddings"]) -> "VisionEmbeddings":
+    def concatenate(cls, embeds: Sequence[VisionEmbeddings]) -> VisionEmbeddings:
         if not embeds:
             return cls(tokens=jnp.zeros((0, 0), dtype=jnp.float16), deepstack=())
         tokens = jnp.concatenate([e.tokens for e in embeds], axis=0)
@@ -40,13 +40,13 @@ class VisionEmbeddings:
         )
         return cls(tokens=tokens, deepstack=deepstack)
 
-    def cast(self, dtype: jnp.dtype) -> "VisionEmbeddings":
+    def cast(self, dtype: jnp.dtype) -> VisionEmbeddings:
         return VisionEmbeddings(
             tokens=self.tokens.astype(dtype),
             deepstack=tuple(f.astype(dtype) for f in self.deepstack),
         )
 
-    def with_batch_dim(self, batch: int) -> "VisionEmbeddings":
+    def with_batch_dim(self, batch: int) -> VisionEmbeddings:
         """Ensure batch dimension matches expected size"""
         tokens = self.tokens if self.tokens.ndim == 3 else self.tokens[None, ...]
         if tokens.shape[0] == 1 and batch > 1:
@@ -80,7 +80,7 @@ class VisionGridData:
     )  # [total_patches] int32  temporal-repeat + merge reorder
 
 
-def compute_grid_data(grid_thw, spec: "VisionModelConfig") -> VisionGridData:
+def compute_grid_data(grid_thw, spec: VisionModelConfig) -> VisionGridData:
     """Compute static positional data from grid_thw.
 
     Call outside the JIT boundary.
@@ -209,6 +209,52 @@ def compute_grid_data(grid_thw, spec: "VisionModelConfig") -> VisionGridData:
     )
 
 
+@functools.lru_cache(maxsize=1)
+def _cudnn_attention_available() -> bool:
+    """Whether jax.nn.dot_product_attention's cuDNN backend actually works here.
+
+    Probed rather than inferred: a cuDNN built for a different CUDA major
+    version installs over the expected one and then fails every shape check at
+    runtime, which is invisible from the package list.
+    """
+    try:
+        devices = jax.devices()
+    except RuntimeError:
+        return False
+    if not devices or devices[0].platform != "gpu":
+        return False
+    probe = jnp.zeros((1, 8, 2, 8), jnp.bfloat16)
+    try:
+        jax.block_until_ready(
+            jax.jit(
+                lambda q, k, v: jax.nn.dot_product_attention(
+                    q, k, v, implementation="cudnn"
+                )
+            )(probe, probe, probe)
+        )
+    except Exception:
+        return False
+    return True
+
+
+def attention_impl_kwargs(dtype: jnp.dtype) -> dict[str, str]:
+    """Extra kwargs for ``jax.nn.dot_product_attention`` given a compute dtype.
+
+    cuDNN is the only backend that gives real flash attention: O(1) scratch
+    instead of an O(seq_len^2) logits buffer (measured: 0 MiB vs 6 GiB of temp
+    at seq_len 8192 with 16 heads).  ``dot_product_attention`` does **not**
+    select it by default -- the default resolves to the XLA reference kernel,
+    which materialises the full logits -- so it must be asked for explicitly.
+
+    Returns ``{}`` (portable XLA kernel) when cuDNN is unavailable or when the
+    compute dtype is not one cuDNN accepts; it supports fp16/bf16/fp8 only and
+    raises on float32, which is used for numerical-parity runs.
+    """
+    if jnp.dtype(dtype) not in (jnp.dtype(jnp.bfloat16), jnp.dtype(jnp.float16)):
+        return {}
+    return {"implementation": "cudnn"} if _cudnn_attention_available() else {}
+
+
 @dataclasses.dataclass
 class VisionModelConfig:
     hidden_size: int
@@ -221,14 +267,13 @@ class VisionModelConfig:
     spatial_merge_size: int
     window_size: int
     in_channels: int
-    num_position_embeddings: Optional[int]
+    num_position_embeddings: int | None
     deepstack_visual_indexes: Sequence[int]
     mrope_section: Sequence[int]
     image_pad_id: int
 
 
 class VisionRotaryEmbedding(nnx.Module):
-
     def __init__(self, dim: int, theta: float = 10000.0):
         self.dim = dim
         self.theta = theta
@@ -241,7 +286,6 @@ class VisionRotaryEmbedding(nnx.Module):
 
 
 class VisionPatchEmbed(nnx.Module):
-
     def __init__(
         self,
         embed_dim: int,
@@ -266,7 +310,6 @@ class VisionPatchEmbed(nnx.Module):
 
 
 class VisionAttention(nnx.Module):
-
     def __init__(
         self,
         hidden_size: int,
@@ -306,7 +349,7 @@ class VisionAttention(nnx.Module):
             seq_len: Total sequence length
 
         Returns:
-            Attention bias mask of shape (1, 1, seq_len, seq_len)
+            Boolean mask of shape (1, 1, seq_len, seq_len); True = may attend.
         """
         positions = jnp.arange(seq_len)
         starts = cu_seqlens[:-1]
@@ -318,13 +361,12 @@ class VisionAttention(nnx.Module):
         )
         segment_ids = jnp.argmax(in_segment.astype(jnp.int32), axis=-1)
 
-        # Create block-diagonal mask
+        # Block-diagonal boolean mask (True = may attend), which is what
+        # jax.nn.dot_product_attention expects.  An additive float mask would
+        # work too, but a bool one keeps the buffer 4x smaller and is accepted
+        # by the cuDNN path.
         same_segment = segment_ids[:, None] == segment_ids[None, :]
-        attention_mask = jnp.where(same_segment, 0.0, jnp.finfo(self.dtype).min).astype(
-            self.dtype
-        )
-
-        return attention_mask[None, None, :, :]  # (1, 1, seq_len, seq_len)
+        return same_segment[None, None, :, :]  # (1, 1, seq_len, seq_len)
 
     def __call__(
         self, x: jax.Array, cos: jax.Array, sin: jax.Array, cu_seqlens: jax.Array
@@ -346,32 +388,32 @@ class VisionAttention(nnx.Module):
         q = (q_f * cos_f + rotate_half(q_f) * sin_f).astype(self.dtype)
         k = (k_f * cos_f + rotate_half(k_f) * sin_f).astype(self.dtype)
 
-        # Transpose to (num_heads, seq_len, head_dim) for attention
-        q = jnp.transpose(q, (1, 0, 2))
-        k = jnp.transpose(k, (1, 0, 2))
-        v = jnp.transpose(v, (1, 0, 2))
-
-        # QK in bfloat16, matching PyTorch eager: torch.matmul(query, key.T) in query dtype.
-        scores = (
-            jnp.einsum("hqd,hkd->hqk", q, k) * self.scale
-        )  # (num_heads, L, L) bfloat16
-
-        # Create and apply attention mask
-        attn_mask = self._create_attention_mask(cu_seqlens, seq_len)
-        scores = scores + attn_mask.squeeze(0)  # Broadcast to [num_heads, L, L]
-
-        # Softmax in float32, cast to bfloat16, then bfloat16 AV.
-        # Matches PyTorch eager: F.softmax(..., dtype=float32).to(query.dtype) then matmul.
-        weights = jax.nn.softmax(scores.astype(jnp.float32), axis=-1).astype(self.dtype)
-        out = jnp.einsum("hqk,hkd->hqd", weights, v)  # (num_heads, L, head_dim)
-
-        # Transpose back to [L, num_heads, head_dim] and reshape
-        out = jnp.transpose(out, (1, 0, 2)).reshape(seq_len, self.hidden_size)
-        return self.out_proj(out)
+        # Attention over the packed patch sequence.  Written as
+        # dot_product_attention rather than an explicit einsum + softmax so the
+        # cuDNN flash kernel can be used where available: the explicit form
+        # materialises a [num_heads, L, L] logits buffer, which for two 1086x1536
+        # pages is 10.2 GiB and OOMs a 24 GB card.
+        #
+        # cu_seqlens has one entry per image plus a leading 0, so a single image
+        # needs no mask at all -- every patch may attend to every other one.
+        # Skipping it there avoids even allocating the [L, L] mask.
+        mask = (
+            None
+            if cu_seqlens.shape[0] <= 2
+            else self._create_attention_mask(cu_seqlens, seq_len)
+        )
+        out = jax.nn.dot_product_attention(
+            q[None],  # (1, L, num_heads, head_dim), i.e. BTNH
+            k[None],
+            v[None],
+            mask=mask,
+            scale=self.scale,
+            **attention_impl_kwargs(q.dtype),
+        )[0]
+        return self.out_proj(out.reshape(seq_len, self.hidden_size))
 
 
 class VisionMLP(nnx.Module):
-
     def __init__(
         self,
         hidden_size: int,
@@ -406,7 +448,6 @@ class VisionMLP(nnx.Module):
 
 
 class VisionBlock(nnx.Module):
-
     def __init__(
         self,
         spec: VisionModelConfig,
@@ -455,7 +496,6 @@ class VisionBlock(nnx.Module):
 
 
 class VisionPatchMerger(nnx.Module):
-
     def __init__(
         self,
         context_dim: int,
@@ -509,7 +549,6 @@ class VisionPatchMerger(nnx.Module):
 
 
 class VisionModel(nnx.Module):
-
     def __init__(
         self,
         config: VisionModelConfig,

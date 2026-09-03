@@ -13,18 +13,64 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "black>=25.1.0",
     "ipython>=9.2.0",
-    "isort>=6.0.1",
-    "mypy>=1.15.0",
     "pytest>=8.4.1",
     "ruff>=0.13.1",
+    "ty>=0.0.76",
 ]
 extra = [
     "pillow>=11.2.1",
     "datasets>=4.1.1",
 ]
+# Cross-framework consistency checks (JAX vs HuggingFace) only.  Deliberately
+# NOT in default-groups: torch's CUDA build ships nvidia-*-cu13 wheels that
+# install over JAX's nvidia-*-cu12 ones -- notably libcudnn.so.9 -- which
+# silently disables the cuDNN flash-attention kernel.  Pinned to the CPU build
+# (see [tool.uv.sources]), which has no nvidia dependencies at all; the
+# consistency checks run on CPU anyway.  Installed only in the
+# `build-dev-torch` Docker stage.
+crosscheck = [
+    "torch",
+    "torchvision",
+    "accelerate",
+]
 
 
 [tool.uv]
 default-groups = ["dev", "extra"]
+
+# `explicit = true` keeps this index out of normal resolution: it is consulted
+# only for the packages routed to it in [tool.uv.sources] below.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
+
+
+[tool.ruff]
+target-version = "py312"
+extend-exclude = ["reference", "build", "dist", "output"]
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, isort, pyupgrade, flake8-bugbear, flake8-simplify
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",    # line length is handled by the formatter
+    "B008",    # function call in default arg: common and intentional in JAX configs
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Experiments and tests set sys.path / env before importing, so imports cannot
+# all sit at the top of the file.
+"experiments/*" = ["E402"]
+"tests/*" = ["E402"]
+
+[tool.ty.environment]
+python = "/venv"
+
+[tool.ty.src]
+exclude = ["reference", "build", "dist", "output"]

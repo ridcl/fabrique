@@ -1,8 +1,10 @@
+// Default environment: JAX only. Use this unless you are running
+// cross-framework consistency checks -- see .devcontainer/torch/ for that.
 {
-	"name": "Existing Dockerfile",
+	"name": "fabrique",
 	"build": {
-		"context": "..",
-		"dockerfile": "../Dockerfile",
+		"context": "../..",
+		"dockerfile": "../../Dockerfile",
 		"target": "build-dev"
 	},
 

@@ -16,6 +16,7 @@
 
 import dataclasses
 import enum
+import typing
 
 import flax
 import jax
@@ -43,6 +44,23 @@ K_MASK = -2.3819763e38
 
 LayerCache = dict[str, jaxtyping.Array]
 Cache = dict[str, LayerCache]
+
+
+class Qwen3VLOutput(typing.NamedTuple):
+    """What `Qwen3VL.__call__` returns.
+
+    A named tuple rather than a bare tuple because two of the three fields are
+    conditional: `logits` is None under `skip_lm_head`, and `hidden_states` is
+    None unless `output_hidden_states` is set.  Returning the hidden states here
+    rather than through `nnx.sow` keeps them out of the module's state -- sown
+    values have to be popped to be cleared, and a caller that forgets simply
+    gets nothing back, which is how two call sites in this package ended up
+    passing `output_hidden_states=True` and silently discarding the result.
+    """
+
+    logits: jaxtyping.Array | None
+    cache: Cache | None
+    hidden_states: jaxtyping.Array | None = None
 
 
 class RematConfig(enum.Enum):
@@ -904,7 +922,9 @@ class Qwen3VL(BackendMappingMixin, nnx.Module):
         cache: Cache | None,  # (sequence length L')
         padding_mask: jaxtyping.Array | None,  # [B, L]
         output_hidden_states: bool = False,
-    ) -> tuple[jaxtyping.Array, Cache | None]:
+        inputs_embeds: jaxtyping.Array | None = None,  # [B, L, D]
+        skip_lm_head: bool = False,
+    ) -> Qwen3VLOutput:
         """Qwen3-VL model.
 
         Args:
@@ -916,7 +936,20 @@ class Qwen3VL(BackendMappingMixin, nnx.Module):
           padding_mask: Optional 2D padding mask of shape [B, L], where 1
             indicates a real token and 0 indicates padding.  A position-based
             causal mask is built internally from positions[0] and this mask.
-          output_hidden_states: whether to output the hidden states.
+          output_hidden_states: return the final layer's hidden states, [B, L, D],
+            in the `hidden_states` field.  Final layer only -- returning all
+            `num_layers` of them would be ~590 MB per step at batch 4, seq 800.
+          inputs_embeds: optional pre-computed token embeddings of shape
+            [B, L, D], used instead of embedding `input_tokens`.  `input_tokens`
+            is still required: it locates the `<|image_pad|>` positions the
+            vision features are scattered into.  This is the hook for putting a
+            learned vector at a sequence position -- soft prompts, prefix
+            tuning, or slot/pseudo tokens the model reads a prediction off.
+          skip_lm_head: skip the vocabulary projection and return None in place
+            of the logits.  That projection is [B, L, vocab_size] -- roughly
+            0.5 GB and 2.4 TFLOP at L=800, batch 2 -- which is wasted whenever
+            only hidden states are wanted, and is retained as an autodiff
+            residual when gradients flow through the backbone.
 
         Returns:
           predicted_logits, new_cache
@@ -925,7 +958,10 @@ class Qwen3VL(BackendMappingMixin, nnx.Module):
           new_cache: updated cache if the input cache is not None, None elsewhere.
         """
         new_cache = None if cache is None else {}
-        x = self.embedder.encode(input_tokens)
+        if inputs_embeds is None:
+            x = self.embedder.encode(input_tokens)
+        else:
+            x = shard(inputs_embeds, self.embedder.shd_config.act_btd)
         bsz = x.shape[0]
 
         # Build the causal attention mask from the text/temporal axis of M-RoPE
@@ -1037,14 +1073,18 @@ class Qwen3VL(BackendMappingMixin, nnx.Module):
                 x = self._apply_deepstack(x, visual_mask, deepstack_map[i])
 
         x = self.final_norm(x)
-        if output_hidden_states:
-            self.sow(nnx.Intermediate, "all_hidden_states", x)
-        if self.config.use_tied_embedding:
+        if skip_lm_head:
+            logits = None
+        elif self.config.use_tied_embedding:
             logits = self.embedder.decode(x)
         else:
             logits = self.lm_head(x)
 
-        return logits, new_cache  # pytype: disable=bad-return-type
+        return Qwen3VLOutput(
+            logits=logits,
+            cache=new_cache,
+            hidden_states=x if output_hidden_states else None,
+        )
 
     def encode_vision(
         self, pixel_values: jax.Array, precomputed: VisionGridData

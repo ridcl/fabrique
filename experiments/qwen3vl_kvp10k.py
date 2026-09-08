@@ -365,7 +365,7 @@ def _loss_fn(
     padding_mask: jax.Array,
     completion_mask: jax.Array,
 ) -> jax.Array:
-    logits, _ = model(
+    logits, _, _ = model(
         input_tokens,
         positions,
         pixel_values,

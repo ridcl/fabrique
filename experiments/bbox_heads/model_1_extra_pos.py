@@ -42,10 +42,12 @@ at 1.23 s/example for forward+backward with ``RematConfig.BLOCK``, against
 from __future__ import annotations
 
 import math
+from typing import cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import qwix
 from flax import nnx
 
 from experiments.bbox_heads import model_1
@@ -64,6 +66,42 @@ MEDIAN_BOX_SIZE = (0.118, 0.011)
 
 # Everything outside `.backbone`: the slot offset and the readout projection.
 TRAINABLE = nnx.All(nnx.Param, nnx.Not(nnx.PathContains("backbone")))
+
+# ...plus the LoRA adapters, which live *inside* `.backbone` and so are excluded
+# by the filter above.  qwix gives them their own variable type, which is a
+# cleaner handle than matching parameter names (they are called `w_lora_a` and
+# `kernel_lora_a`, so a "lora_a" path filter matches nothing -- nnx path filters
+# match whole segments).
+TRAINABLE_WITH_LORA = nnx.Any(TRAINABLE, nnx.LoRAParam)
+
+# Language-model projections only.  The vision tower names its projections
+# `qkv_proj` and `out_proj`, neither of which matches these patterns, so the
+# encoder stays frozen: the question is whether the *language* side can learn to
+# route the box out of visual features it already has.
+LORA_TARGETS = ".*q_proj|.*k_proj|.*gate_proj|.*up_proj|.*down_proj"
+
+
+def add_lora(backbone: Qwen3VL, *, rank: int, alpha: float, rngs: nnx.Rngs) -> Qwen3VL:
+    """Wrap the backbone's LM projections with LoRA adapters.
+
+    Apply this *before* constructing :class:`SlotBoxModel`: qwix traces the
+    module it is given, and `get_model_input()` describes the backbone's
+    signature, not the wrapper's.
+
+    ``lora_b`` is zero-initialised, so the adapters start as the identity and
+    step 0 is still exactly the frozen model read at its own ``<|box_start|>``.
+    ``rngs`` is not optional in practice -- omitting it makes qwix warn and skip
+    initialising ``lora_a``.
+    """
+    provider = qwix.LoraProvider(module_path=LORA_TARGETS, rank=rank, alpha=alpha)
+    # qwix is typed for both linen and nnx, so its return is a union; here it is
+    # the same nnx module it was handed, with adapters spliced in.
+    return cast(
+        Qwen3VL,
+        qwix.apply_lora_to_model(
+            backbone, provider, rngs=rngs, **backbone.get_model_input()
+        ),
+    )
 
 
 def _logit(p: float) -> float:

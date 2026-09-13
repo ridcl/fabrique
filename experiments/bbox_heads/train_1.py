@@ -528,8 +528,14 @@ class MetricWriter:
         tb_dir: str,
         run_name: str,
         fieldnames: list[str] | None = None,
+        append: bool = False,
     ):
         """``fieldnames`` declares the full schema up front.
+
+        ``append`` keeps an existing CSV and adds to it instead of truncating,
+        which is what a resumed run wants.  Without it a restart silently
+        destroys the previous run's history -- which is exactly what happened to
+        2400 steps of the first long LoRA run.
 
         A CSV header is fixed by the first row written, so a run that logs cheap
         rows often and expensive ones (evaluation) rarely has to declare both
@@ -538,9 +544,11 @@ class MetricWriter:
         """
         os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
         self.path = csv_path
+        resuming = append and os.path.exists(csv_path) and os.path.getsize(csv_path) > 0
         # Held open for the run and flushed per row, so a killed run still
         # leaves a readable file -- a context manager would close it here.
-        self._file = open(csv_path, "w", newline="")  # noqa: SIM115
+        self._file = open(csv_path, "a" if resuming else "w", newline="")  # noqa: SIM115
+        self._wrote_header = resuming
         self._fieldnames = fieldnames
         self._writer: csv.DictWriter | None = None
         self.tb_path = os.path.join(tb_dir, run_name)
@@ -551,7 +559,9 @@ class MetricWriter:
             self._writer = csv.DictWriter(
                 self._file, fieldnames=self._fieldnames or list(row), restval=""
             )
-            self._writer.writeheader()
+            if not self._wrote_header:
+                self._writer.writeheader()
+                self._wrote_header = True
         self._writer.writerow(row)
         self._file.flush()
 

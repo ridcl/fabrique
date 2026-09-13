@@ -102,8 +102,11 @@ WORKDIR "${BUILD_DIR}"
 RUN uv lock && uv sync --active
 WORKDIR /home/${USERNAME}
 
-# Install specific variation of JAX, but don't add to prooject dependencies
-RUN uv pip install jax[cuda]==0.8.1
+# Install specific variation of JAX, but don't add to prooject dependencies.
+# NOTE: this lives outside uv.lock, so any later `uv sync` without --inexact
+# will remove it.  Keep the version consistent with the lock's jax (flax 0.12.6
+# breaks on jax >= 0.11, which removed jax.core.Effect).
+RUN uv pip install jax[cuda12]==0.10.1
 
 
 ###########################################################
@@ -135,7 +138,12 @@ FROM build-dev AS build-dev-torch
 ARG USERNAME=devpod
 
 WORKDIR "${BUILD_DIR}"
-RUN uv sync --active --group crosscheck
+# --inexact is essential: a plain `uv sync` enforces the lockfile exactly and so
+# UNINSTALLS anything not in it -- including the jax[cuda] that build-base
+# installs deliberately outside the lock, silently replacing it with the
+# lock's CPU-only jax.  That leaves a broken environment (flax 0.12.6 needs
+# jax < 0.11, and no GPU at all).
+RUN uv sync --active --inexact --group crosscheck
 WORKDIR /home/${USERNAME}
 
 CMD ["echo", "Create (with torch)!"]

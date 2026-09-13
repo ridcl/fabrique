@@ -25,6 +25,13 @@
 		"XLA_FLAGS": "--xla_gpu_enable_command_buffer="
 	},
 
+	// See the note in .devcontainer/default/devcontainer.json: this talks to the
+	// host docker daemon, and must not be paired with a manual bind-mount of
+	// /var/run/docker.sock.
+	"features": {
+		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+	},
+
 	"customizations": {
         "vscode": {
             "extensions": [

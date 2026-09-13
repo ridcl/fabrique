@@ -237,7 +237,9 @@ def _cudnn_attention_available() -> bool:
     return True
 
 
-def attention_impl_kwargs(dtype: jnp.dtype) -> dict[str, str]:
+def attention_impl_kwargs(
+    dtype: jnp.dtype, head_dim: int | None = None
+) -> dict[str, str]:
     """Extra kwargs for ``jax.nn.dot_product_attention`` given a compute dtype.
 
     cuDNN is the only backend that gives real flash attention: O(1) scratch
@@ -246,11 +248,18 @@ def attention_impl_kwargs(dtype: jnp.dtype) -> dict[str, str]:
     select it by default -- the default resolves to the XLA reference kernel,
     which materialises the full logits -- so it must be asked for explicitly.
 
-    Returns ``{}`` (portable XLA kernel) when cuDNN is unavailable or when the
-    compute dtype is not one cuDNN accepts; it supports fp16/bf16/fp8 only and
-    raises on float32, which is used for numerical-parity runs.
+    Returns ``{}`` (portable XLA kernel) when cuDNN is unavailable, when the
+    compute dtype is not one cuDNN accepts (fp16/bf16/fp8 only -- it raises on
+    float32, which is used for numerical-parity runs), or when ``head_dim`` is
+    outside what the kernel supports.
     """
     if jnp.dtype(dtype) not in (jnp.dtype(jnp.bfloat16), jnp.dtype(jnp.float16)):
+        return {}
+    # cuDNN flash attention only supports head_dim <= 128 and a multiple of 8.
+    # Qwen3.5 uses head_dim 256, so its full-attention layers cannot use it and
+    # must fall back to the (quadratic-memory) XLA kernel.  Checked here rather
+    # than left to raise at trace time.
+    if head_dim is not None and (head_dim > 128 or head_dim % 8):
         return {}
     return {"implementation": "cudnn"} if _cudnn_attention_available() else {}
 

@@ -370,6 +370,7 @@ def main() -> None:
         run_name,
         fieldnames=["epoch", "pass", "batch_loss", "lr", "grad_norm"]
         + [f"eval_{k}" for k in eval_fields],
+        append=bool(args.resume),
     )
     logger.info("tb       %s", metrics.tb_path)
     # 0.9 s/example measured with LoRA at batch 2, 1.23 s/example frozen at

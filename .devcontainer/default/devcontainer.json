@@ -23,6 +23,15 @@
 		"XLA_FLAGS": "--xla_gpu_enable_command_buffer="
 	},
 
+	// Talks to the HOST docker daemon. The feature mounts the host socket to
+	// /var/run/docker-host.sock and puts a socat proxy on /var/run/docker.sock
+	// owned by the container user -- do NOT also bind-mount the host socket
+	// onto /var/run/docker.sock, that collides with the proxy and reintroduces
+	// the group-ownership problem the feature exists to solve.
+	"features": {
+		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+	},
+
 	"customizations": {
         "vscode": {
             "extensions": [

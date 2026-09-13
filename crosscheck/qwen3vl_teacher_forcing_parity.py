@@ -10,8 +10,8 @@ That is one prefill per document instead of thousands of decode steps, and it
 measures per-position agreement directly, so it is both far cheaper and more
 sensitive than an end-to-end metric.
 
-    python tests/qwen3vl_teacher_forcing_parity.py
-    FABRIQUE_DEEPSTACK_AT_FIRST_LAYERS=1 python tests/qwen3vl_teacher_forcing_parity.py
+    python crosscheck/qwen3vl_teacher_forcing_parity.py
+    FABRIQUE_DEEPSTACK_AT_FIRST_LAYERS=1 python crosscheck/qwen3vl_teacher_forcing_parity.py
 """
 
 import argparse

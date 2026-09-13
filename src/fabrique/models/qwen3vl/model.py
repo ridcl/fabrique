@@ -1052,7 +1052,7 @@ class Qwen3VL(BackendMappingMixin, nnx.Module):
         # is what both transformers (`layer_idx in range(len(embeds))`) and vLLM do.
         # Confirmed by teacher-forced agreement with this checkpoint's vLLM output
         # over 8434 token positions: 96.9% here vs 95.7% when injecting at
-        # 5/11/17, better on every document (tests/qwen3vl_teacher_forcing_parity.py).
+        # 5/11/17, better on every document (crosscheck/qwen3vl_teacher_forcing_parity.py).
         deepstack_map = dict(enumerate(deepstack))
         for i, layer in enumerate(self.layers):
             layer_name = f"layer_{i}"

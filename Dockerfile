@@ -121,7 +121,7 @@ CMD ["echo", "Create!"]
 
 ###########################################################
 # Same as build-dev, plus PyTorch, for cross-framework consistency checks
-# (src/fabrique/models/qwen3vl/consistency_test.py, tests/qwen3vl_vision_parity.py).
+# (crosscheck/qwen3vl_consistency.py, crosscheck/qwen3vl_vision_parity.py).
 # Select it from .devcontainer/torch/devcontainer.json.
 #
 # The `crosscheck` group pins the *CPU* build of torch on purpose: the CUDA

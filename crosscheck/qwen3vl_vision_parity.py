@@ -1,6 +1,6 @@
 """Stage-by-stage parity of the JAX Qwen3-VL vision tower against HuggingFace.
 
-`consistency_test.py` showed that the token embeddings match exactly while the
+`qwen3vl_consistency.py` showed that the token embeddings match exactly while the
 *vision* token embeddings diverge (fp32 max ~0.74, unchanged from bf16, so it is
 a real defect and not rounding).  This script feeds both towers identical
 pixel_values and reports where in the tower the divergence appears: patch embed,
@@ -9,7 +9,7 @@ positional embedding, each of the 24 blocks, then the merger.
 Both frameworks run on CPU in float32 so the comparison is exact.  The vision
 tower is small (hidden 1024, depth 24), so this is fast even on CPU.
 
-    python tests/qwen3vl_vision_parity.py --image /tmp/page_small.png
+    python crosscheck/qwen3vl_vision_parity.py --image /tmp/page_small.png
 """
 
 import argparse

@@ -20,10 +20,10 @@ compares hidden states after every decoder layer as well as the final logits.
 Usage::
 
     # HuggingFace model ID (downloaded automatically):
-    python -m fabrique.models.qwen3vl.consistency_test --model_id_or_dir Qwen/Qwen3-VL-4B-Instruct
+    python crosscheck/qwen3vl_consistency.py --model_id_or_dir Qwen/Qwen3-VL-4B-Instruct
 
     # Local checkpoint directory:
-    python -m fabrique.models.qwen3vl.consistency_test --model_id_or_dir /path/to/checkpoint
+    python crosscheck/qwen3vl_consistency.py --model_id_or_dir /path/to/checkpoint
 
 The script prints a diff table and exits with code 0 if the top-1 prediction
 at the last token position matches across both frameworks.
@@ -563,14 +563,15 @@ def main(
 
     Can be called directly from a Python console::
 
-        from fabrique.models.qwen3vl.consistency_test import main
+        import sys; sys.path.insert(0, "crosscheck")   # not an importable package
+        from qwen3vl_consistency import main
         main('Qwen/Qwen3-VL-4B-Instruct')                 # downloads from Hub
         main('/path/to/local/Qwen3-VL-4B-Instruct')        # local directory
         main('Qwen/Qwen3-VL-4B-Instruct', image_url='...')  # multimodal
 
     Or from the command line::
 
-        python -m fabrique.models.qwen3vl.consistency_test --model_id_or_dir Qwen/Qwen3-VL-4B-Instruct
+        python crosscheck/qwen3vl_consistency.py --model_id_or_dir Qwen/Qwen3-VL-4B-Instruct
 
     Args:
       model_id_or_dir: HuggingFace repo ID or local checkpoint directory.

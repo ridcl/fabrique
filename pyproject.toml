@@ -7,6 +7,11 @@ requires-python = ">=3.12"
 dependencies = [
     "google-tunix[prod]==0.1.6",
     "flax==0.12.6",
+    # flax 0.12.6 uses jax.core.Effect, removed in jax 0.11 -- but flax only
+    # declares `jax>=0.8.1`, so an unpinned `uv lock` happily resolves 0.11.x
+    # and produces an environment where nothing imports.  Pin it here; the
+    # Dockerfile re-locks on every build, so the lockfile alone is not enough.
+    "jax<0.11",
     "optax>=0.2.5",
     "multimethod>=2.0",
 ]
@@ -51,6 +56,15 @@ torch = { index = "pytorch-cpu" }
 torchvision = { index = "pytorch-cpu" }
 
 
+# `tests` is the pytest suite and nothing else: pure-JAX, runs in the default
+# environment, safe for CI.  One-off cross-framework checks live in `crosscheck/`
+# and must never be collected -- they need torch, which CI does not install.
+# `reference/` is a vendored read-only checkout (gitignored) with its own,
+# unrunnable test tree.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["reference", "build", "dist", "output", "crosscheck", ".git"]
+
 [tool.ruff]
 target-version = "py312"
 extend-exclude = ["reference", "build", "dist", "output"]
@@ -64,13 +78,18 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Experiments and tests set sys.path / env before importing, so imports cannot
-# all sit at the top of the file.
+# Experiments, tests and cross-framework checks set sys.path / env before
+# importing, so imports cannot all sit at the top of the file.  Note ruff still
+# lints crosscheck/ -- it never resolves imports, so absent torch is a non-issue.
 "experiments/*" = ["E402"]
 "tests/*" = ["E402"]
+"crosscheck/*" = ["E402"]
 
 [tool.ty.environment]
 python = "/venv"
 
+# `crosscheck` is excluded because those scripts import torch/torchvision, which
+# are NOT installed in the default environment (see the `crosscheck` dependency
+# group above) -- without this, every default-env run reports unresolved imports.
 [tool.ty.src]
-exclude = ["reference", "build", "dist", "output"]
+exclude = ["reference", "build", "dist", "output", "crosscheck"]

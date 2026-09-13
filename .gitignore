@@ -156,8 +156,10 @@ app.logs
 __MACOSX/
 class_by_href_text/
 
-# uv
-uv.lock
+# uv: uv.lock is COMMITTED on purpose -- it is the environment pin that lets
+# pyproject.toml keep open version ranges.  Ignoring it here also hid it from
+# the Docker build context (.dockerignore mirrors this file), so every build
+# re-resolved against latest PyPI.  Do not re-add it.
 
 # reference implementations
 reference/

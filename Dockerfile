@@ -99,14 +99,25 @@ COPY --chown=${USERNAME}:${USERNAME} . "$BUILD_DIR"
 
 
 WORKDIR "${BUILD_DIR}"
-RUN uv lock && uv sync --active
+# --locked installs exactly what the committed uv.lock says and FAILS if the lock
+# has drifted from pyproject.toml, instead of quietly re-resolving.  That is the
+# whole reproducibility story: pyproject.toml carries open ranges so fabrique
+# stays installable as a library, and the lock carries the exact versions.
+# (The old `uv lock && uv sync` re-resolved against latest PyPI on every build,
+# which is how jaxlib 0.11.1 kept getting in.  Re-lock deliberately with
+# `uv lock` on the host and commit the diff.)
+#
+# --extra cuda12 replaces the former out-of-band `uv pip install jax[cuda12]`.
+# Because the extra is declared in pyproject.toml it is now IN the lock, so
+# nothing lives outside it and no --inexact workaround is needed downstream.
+#
+# --no-install-project: the devcontainer bind-mounts the real workspace over
+# /workspaces/fabrique and puts `src` on PYTHONPATH, so the code comes from
+# there.  Installing the project here would bake an editable install pointing at
+# /app/src -- a build-time snapshot that silently serves stale code whenever
+# PYTHONPATH is not set.  Dependencies are what we want from the image.
+RUN uv sync --active --locked --extra cuda12 --no-install-project
 WORKDIR /home/${USERNAME}
-
-# Install specific variation of JAX, but don't add to prooject dependencies.
-# NOTE: this lives outside uv.lock, so any later `uv sync` without --inexact
-# will remove it.  Keep the version consistent with the lock's jax (flax 0.12.6
-# breaks on jax >= 0.11, which removed jax.core.Effect).
-RUN uv pip install jax[cuda12]==0.10.1
 
 
 ###########################################################
@@ -138,12 +149,12 @@ FROM build-dev AS build-dev-torch
 ARG USERNAME=devpod
 
 WORKDIR "${BUILD_DIR}"
-# --inexact is essential: a plain `uv sync` enforces the lockfile exactly and so
-# UNINSTALLS anything not in it -- including the jax[cuda] that build-base
-# installs deliberately outside the lock, silently replacing it with the
-# lock's CPU-only jax.  That leaves a broken environment (flax 0.12.6 needs
-# jax < 0.11, and no GPU at all).
-RUN uv sync --active --inexact --group crosscheck
+# Repeat --extra cuda12: `uv sync` makes the environment match the request
+# exactly, so omitting it here would UNINSTALL the CUDA jax that build-base
+# installed and leave a CPU-only environment.  Previously this needed --inexact
+# because jax[cuda12] lived outside the lock; now that it is a declared extra,
+# naming it is enough and the environment stays fully lock-governed.
+RUN uv sync --active --locked --extra cuda12 --group crosscheck --no-install-project
 WORKDIR /home/${USERNAME}
 
 CMD ["echo", "Create (with torch)!"]

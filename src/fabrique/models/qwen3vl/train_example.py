@@ -216,7 +216,7 @@ def loss_fn(
     completion_mask: jax.Array,  # [B, L] — 1 for tokens to include in loss
 ) -> jax.Array:
     """Cross-entropy loss over answer tokens only."""
-    logits, _ = model(
+    logits, _, _ = model(
         input_tokens,
         positions,
         pixel_values,
@@ -230,9 +230,7 @@ def loss_fn(
 
     token_loss = optax.softmax_cross_entropy_with_integer_labels(
         logits, targets
-    ).astype(
-        jnp.float32
-    )  # [B, L-1]
+    ).astype(jnp.float32)  # [B, L-1]
     return jnp.sum(token_loss * mask) / jnp.sum(mask)
 
 

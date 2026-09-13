@@ -194,7 +194,7 @@ class Qwen3VLSampler:
         cache = self._model.init_cache(batch_size, self._cache_size, self._dtype)
 
         model = nnx.merge(self._model_graphdef, self._flattened_model_state)
-        logits, cache = model(
+        logits, cache, _ = model(
             input_ids_jax,
             positions_3d,
             pixel_values_jax,
@@ -283,7 +283,7 @@ class Qwen3VLSampler:
         positions_3d = jnp.stack([pos, pos, pos], axis=0)  # [3, B, 1]
 
         model = nnx.merge(self._model_graphdef, params)
-        logits, new_cache = model(
+        logits, new_cache, _ = model(
             last_token,
             positions_3d,
             None,  # pixel_values

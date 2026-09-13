@@ -96,7 +96,7 @@ def _greedy_decode(model, tokens, pad_mask, n_steps):
     batch, _ = tokens.shape
     positions = _positions(pad_mask)
     cache = model.init_cache(batch, CACHE_SIZE, jnp.float32)
-    logits, cache = model(
+    logits, cache, _ = model(
         tokens, positions, None, None, cache, pad_mask.astype(jnp.bool_)
     )
     next_pos = jnp.max(positions[0], axis=-1) + 1  # [B]
@@ -106,7 +106,7 @@ def _greedy_decode(model, tokens, pad_mask, n_steps):
         token = jnp.argmax(logits[:, -1, :], axis=-1)  # [B]
         generated.append(token)
         pos = next_pos[:, None]
-        logits, cache = model(
+        logits, cache, _ = model(
             token[:, None], jnp.stack([pos, pos, pos]), None, None, cache, None
         )
         next_pos = next_pos + 1
@@ -120,7 +120,7 @@ def _teacher_forced_logits(model, tokens, pad_mask, generated):
     full_pad = jnp.concatenate(
         [pad_mask, jnp.ones((batch, n_gen), dtype=pad_mask.dtype)], axis=1
     )
-    logits, _ = model(
+    logits, _, _ = model(
         full_tokens,
         _positions(full_pad),
         None,

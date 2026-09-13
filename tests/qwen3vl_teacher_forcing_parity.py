@@ -89,7 +89,7 @@ def main() -> None:
             pad_to_multiple_of=128,
             truncation=True,
         )
-        logits, _ = model(
+        logits, _, _ = model(
             jnp.asarray(batch.input_tokens),
             jnp.asarray(batch.positions),
             jnp.asarray(batch.pixel_values, dtype=jnp.bfloat16),

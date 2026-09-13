@@ -60,7 +60,10 @@ from PIL import Image, ImageDraw
 from fabrique.models.qwen3vl import model as model_lib
 from fabrique.models.qwen3vl.sampler import load_sampler
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+# force=True: importing jax/tunix installs a root logging handler, which makes
+# a plain basicConfig() a silent no-op -- the root level stays at WARNING and
+# every logger.info below is discarded, so a long run looks like it has hung.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", force=True)
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------

@@ -14,38 +14,11 @@
 
 """Utils for loading and converting Qwen3 PT weights."""
 
-import re
-
 import jax
 import jax.numpy as jnp
-from tunix.models import safetensors_loader, safetensors_saver
 
+from fabrique import safetensors_io
 from fabrique.models.qwen3vl import model as model_lib
-
-
-def _stack_experts(params: dict[str, jax.Array]):
-    """Stack experts in the loaded pytorch params."""
-    key_fn = lambda x: int(
-        re.match(r"(.*?)experts\.([0-9]+)\..*", x).group(2)
-    )  # pytype: disable=attribute-error
-    updated_dict = dict(params).copy()
-    for kw in ["gate", "up", "down"]:
-        pattern = r"(.*?)experts\.(.*?)\.{}_proj\.(.*)".format(kw)
-        keys = [k for k in params.keys() if re.match(pattern, k)]
-        prefix_groups = set(
-            [re.match(pattern, k).group(1) for k in keys]
-        )  # pytype: disable=attribute-error
-        for prefix in prefix_groups:
-            keys_to_merge = list(
-                sorted([k for k in keys if k.startswith(prefix)], key=key_fn)
-            )
-            for k in keys_to_merge:
-                del updated_dict[k]
-            with jax.default_device(jax.devices("cpu")[0]):
-                updated_dict[f"{prefix}{kw}_proj"] = jnp.stack(
-                    [params[k] for k in keys_to_merge], 0
-                )
-    return updated_dict
 
 
 def _get_key_and_transform_mapping(cfg: model_lib.ModelConfig):
@@ -203,16 +176,6 @@ def _get_key_and_transform_mapping(cfg: model_lib.ModelConfig):
             r"layers.\1.mlp.down_proj.kernel",
             ((1, 0), None),
         ),
-        # MoE router/gate
-        r"model\.(?:language_model\.)?layers\.([0-9]+)\.mlp\.gate\.weight": (
-            r"layers.\1.mlp.router.kernel",
-            ((1, 0), None),
-        ),
-        # MoE experts.
-        r"model\.(?:language_model\.)?layers\.([0-9]+)\.mlp\.experts\.([0-9]+)\.(gate|up|down)_proj\.weight": (
-            r"layers.\1.mlp.experts.\2.\3_proj.kernel",
-            ((1, 0), None),
-        ),
         # norms
         r"model\.(?:language_model\.)?norm\.weight": ("final_norm.w", None),
         r"model\.(?:language_model\.)?layers\.([0-9]+)\.self_attn\.q_norm\.weight": (
@@ -242,40 +205,16 @@ def create_model_from_safe_tensors(
     mesh: jax.sharding.Mesh | None = None,
     dtype: jnp.dtype | None = None,
 ) -> model_lib.Qwen3VL:
-    """Load tensors from the safetensors file and create a Qwen3 model."""
-    return safetensors_loader.load_and_create_model(
-        file_dir=file_dir,
-        model_class=model_lib.Qwen3VL,
-        config=config,
-        key_mapping=_get_key_and_transform_mapping,
+    """Load tensors from the safetensors file and create a Qwen3-VL model."""
+    return safetensors_io.load_and_create_model(
+        file_dir,
+        model_lib.Qwen3VL,
+        config,
+        _get_key_and_transform_mapping(config),
         mesh=mesh,
-        preprocess_fn=_stack_experts,
         dtype=dtype,
+        log_name="qwen3vl",
     )
-
-
-def _qwen3_state_key_to_safetensors_key(lora_name: str) -> str:
-    """Transform Qwen3 layer path to safetensors state dict key.
-
-    Args:
-      lora_name: Internal layer path (e.g., 'layers.0.attn.q_proj').
-
-    Returns:
-      Safetensors state dict key (e.g., 'model.layers.0.self_attn.q_proj.weight').
-    """
-    return f"model.{lora_name}.weight".replace(".attn.", ".self_attn.")
-
-
-_QWEN3_HUGGINGFACE_TRANSPOSE_RULES = {
-    "q_proj": (1, 0),
-    "k_proj": (1, 0),
-    "v_proj": (1, 0),
-    "o_proj": (1, 0),
-    "up_proj": (1, 0),
-    "down_proj": (1, 0),
-    "gate_proj": (1, 0),
-    "gate": (1, 0),
-}
 
 
 def save_lora_merged_model_as_safetensors(
@@ -285,21 +224,25 @@ def save_lora_merged_model_as_safetensors(
     rank: int,
     alpha: float,
 ):
-    """Saves a Qwen3 model with LoRA weights merged in safetensors format.
+    """Save a Qwen3-VL model with LoRA weights merged, in safetensors format.
+
+    Thin alias for ``fabrique.saving.save_qwen3vl_lora_merged``, which already
+    carries the Qwen3-VL key transform and transpose rules -- and unlike the
+    tunix saver it replaced, handles checkpoints sharded across several files.
 
     Args:
-      local_model_path: Path to the base model safetensors checkpoint directory.
+      local_model_path: Base model safetensors checkpoint directory.
       output_dir: Directory where the merged model will be saved.
-      lora_model: Qwen3 model instance with LoRA weights.
+      lora_model: Qwen3-VL model instance with LoRA weights.
       rank: LoRA rank used during training.
       alpha: LoRA alpha used during training.
     """
-    safetensors_saver.save_lora_merged_model_as_safetensors(
-        local_model_path=local_model_path,
+    from fabrique.saving import save_qwen3vl_lora_merged
+
+    save_qwen3vl_lora_merged(
+        model_id_or_dir=local_model_path,
         output_dir=output_dir,
         lora_model=lora_model,
         rank=rank,
         alpha=alpha,
-        state_key_transform_fn=_qwen3_state_key_to_safetensors_key,
-        transpose_rules=_QWEN3_HUGGINGFACE_TRANSPOSE_RULES,
     )

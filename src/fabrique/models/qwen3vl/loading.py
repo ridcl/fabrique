@@ -41,7 +41,9 @@ def _load_processor(model_dir: str) -> AutoProcessor:
 
     This function assembles the processor from its two torch-free components:
 
-    * ``Qwen2VLImageProcessor`` — the *slow* image processor (PIL + NumPy only).
+    * the PIL/NumPy image processor -- ``Qwen2VLImageProcessorPil`` on
+      transformers 5+, ``Qwen2VLImageProcessor`` on 4.x.  Never the
+      torchvision-backed one.
     * ``AutoTokenizer`` — the standard HuggingFace tokenizer.
 
     The two are wrapped in ``Qwen2VLProcessor`` with ``video_processor=None``.
@@ -73,10 +75,27 @@ def _load_processor(model_dir: str) -> AutoProcessor:
         _pu.ProcessorMixin.check_argument_for_proper_class = _patched
 
     from transformers import AutoTokenizer
-    from transformers.models.qwen2_vl.image_processing_qwen2_vl import (
-        Qwen2VLImageProcessor,
-    )
     from transformers.models.qwen2_vl.processing_qwen2_vl import Qwen2VLProcessor
+
+    # transformers 5 split each image processor into backend variants and made
+    # the *torchvision* one the default name; its module does
+    # `import torch` / `from torchvision.transforms.v2 import ...` at module
+    # scope.  The PIL variant is numpy+Pillow only and -- verified
+    # bit-identical on input_ids, pixel_values and image_grid_thw -- produces
+    # exactly the same output as the 4.x processor.  Prefer it when present.
+    #
+    # Selected by try/except rather than a version comparison on purpose:
+    # `transformers.__version__ >= "5"` is a string compare, so it would read
+    # "10.0" as older than "5".  transformers 4.x's Qwen2VLImageProcessor is
+    # itself torch-free, so the fallback is correct, not a degradation.
+    try:
+        from transformers.models.qwen2_vl.image_processing_pil_qwen2_vl import (
+            Qwen2VLImageProcessorPil as _ImageProcessor,
+        )
+    except ImportError:
+        from transformers.models.qwen2_vl.image_processing_qwen2_vl import (
+            Qwen2VLImageProcessor as _ImageProcessor,
+        )
 
     tok = AutoTokenizer.from_pretrained(model_dir)
 
@@ -94,7 +113,7 @@ def _load_processor(model_dir: str) -> AutoProcessor:
         with open(proc_cfg_path) as f:
             nested = json.load(f).get("image_processor")
         if nested:
-            # Qwen2VLImageProcessor.from_dict ignores size.{shortest,longest}_edge
+            # The image processor's from_dict ignores size.{shortest,longest}_edge
             # and falls back to the default min_pixels/max_pixels unless they are
             # given explicitly, so map them across by hand.
             size = nested.get("size") or {}
@@ -102,9 +121,9 @@ def _load_processor(model_dir: str) -> AutoProcessor:
                 nested["min_pixels"] = size["shortest_edge"]
             if "longest_edge" in size and "max_pixels" not in nested:
                 nested["max_pixels"] = size["longest_edge"]
-            img_proc = Qwen2VLImageProcessor.from_dict(nested)
+            img_proc = _ImageProcessor.from_dict(nested)
     if img_proc is None:
-        img_proc = Qwen2VLImageProcessor.from_pretrained(model_dir)
+        img_proc = _ImageProcessor.from_pretrained(model_dir)
 
     # The chat template lives either in tokenizer_config.json (older
     # checkpoints) or in a standalone chat_template.jinja (what recent

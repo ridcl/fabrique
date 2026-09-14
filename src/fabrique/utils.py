@@ -249,12 +249,25 @@ import gc
 import time
 from typing import Any, List, Optional, Tuple
 
+import flax
 import humanize
 import jax
 import jax.numpy as jnp
 from absl import logging
 from flax import nnx
-from tunix.oss import utils as google_utils
+
+
+def setup_sharding_environment() -> None:
+    """Opt out of flax's always-shard-variable behaviour.
+
+    Replaces ``tunix.utils.env_utils.setup_sharding_environment``.  With
+    ``flax_always_shard_variable`` enabled, flax shards every variable at
+    creation time, which conflicts with loading parameters that already carry
+    their own shardings.  The attribute is version-gated because older flax
+    releases do not define the flag at all.
+    """
+    if hasattr(flax.config, "flax_always_shard_variable"):
+        flax.config.update("flax_always_shard_variable", False)
 
 
 # Copied from Tunix with logging.info() -> print() for unconditional printing

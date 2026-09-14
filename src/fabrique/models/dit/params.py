@@ -176,7 +176,7 @@ def load_from_qwen_vl(
     """
     # Initialise the model for real so that unmapped params (time_embed,
     # cond_proj, noise_head) get their proper zero/random init values.
-    # tunix's safetensors_loader starts from nnx.eval_shape (abstract shapes),
+    # fabrique.safetensors_io starts from nnx.eval_shape (abstract shapes),
     # so it can't be used for partial loading — unmapped keys stay as
     # ShapeDtypeStruct and cause InvalidInputException when JIT is called.
     model = DiT(config, rngs=nnx.Rngs(0))

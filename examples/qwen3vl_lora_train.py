@@ -18,7 +18,18 @@ Notes on implementation:
 
 Usage::
 
-    python -m fabrique.models.qwen3vl.train_example
+    python examples/qwen3vl_lora_train.py
+
+NOT YET PORTED OFF TUNIX.  Moved out of ``src/`` when tunix was dropped as a
+dependency, so that the library itself no longer imports it; this script still
+does and will fail at import until its three tunix uses are replaced:
+
+  * ``peft_trainer.PeftTrainer`` / ``TrainingConfig`` -- the training loop
+    itself.  ``experiments/qwen3_5_negation.py`` has a hand-rolled
+    ``nnx.Optimizer`` + ``nnx.value_and_grad`` loop to model it on.
+  * ``metrics_logger.MetricsLoggerOptions`` -- TensorBoard logging.
+  * ``reshard_lib.reshard_pytree`` -- moving freshly-created LoRA params onto
+    the mesh (qwix creates them without sharding annotations).
 """
 
 from __future__ import annotations

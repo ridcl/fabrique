@@ -26,8 +26,6 @@ import numpy as np
 from flax import nnx
 from jax import numpy as jnp
 from jax.interpreters import pxla
-from tunix.generate.mappings import BackendMappingMixin
-from tunix.utils import compat, env_utils
 
 from fabrique.models.qwen3vl.vision import (
     VisionEmbeddings,
@@ -36,8 +34,9 @@ from fabrique.models.qwen3vl.vision import (
     VisionModelConfig,
     attention_impl_kwargs,
 )
+from fabrique.utils import setup_sharding_environment
 
-env_utils.setup_sharding_environment()
+setup_sharding_environment()
 
 
 K_MASK = -2.3819763e38
@@ -842,7 +841,7 @@ class DecoderLayer(nnx.Module):
         return cache, outputs
 
 
-class Qwen3VL(BackendMappingMixin, nnx.Module):
+class Qwen3VL(nnx.Module):
     """Qwen3-VL model."""
 
     def __init__(
@@ -860,7 +859,7 @@ class Qwen3VL(BackendMappingMixin, nnx.Module):
             shd_config=shd_config,
             param_dtype=config.param_dtype,
         )
-        self.layers = compat.ModuleList(
+        self.layers = nnx.List(
             [
                 DecoderLayer(config=config, rngs=rngs, shd_config=shd_config)
                 for _ in range(config.num_layers)

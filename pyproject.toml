@@ -40,8 +40,24 @@ requires-python = ">=3.12"
 # on [tool.uv] below.  Do not add `==` pins here; that is what broke downstream
 # resolvability, and the lock already gives reproducibility.
 dependencies = [
-    "google-tunix[prod]>=0.1.6,<0.2",
     "flax>=0.12,<0.13",
+    # Tokenizer / image-processor loading only -- fabrique never runs a
+    # transformers model, and does not need torch for this: transformers 5 does
+    # not depend on torch, and qwen3vl/loading.py deliberately bypasses the
+    # Auto* processor classes (which are torch-gated regardless of backend) to
+    # assemble the tokenizer and the PIL-backend image processor by hand.
+    # Bounded at <6 only because 5.x is what has been tested end to end; 5's
+    # PIL backend is bit-identical to 4.57's processor on input_ids,
+    # pixel_values and image_grid_thw.
+    "transformers>=4.57,<6",
+    # Chat templates.  transformers declares jinja2 only under its
+    # `chat-template`/`all` extras, so without this `apply_chat_template`
+    # raises ImportError.  It used to arrive transitively via google-tunix.
+    "jinja2>=3.1",
+    # The image processor is the PIL/NumPy one on every supported transformers
+    # version, and both import `PILImageResampling`, which transformers only
+    # defines when Pillow is installed.  Also previously transitive via tunix.
+    "pillow>=11.2.1",
     # Real incompatibility, not a preference: flax uses jax.core.Effect, which
     # jax 0.11 removed.  flax itself only declares `jax>=0.8.1`, so without this
     # bound a resolver happily picks 0.11.x and nothing imports.  It belongs in
@@ -49,6 +65,24 @@ dependencies = [
     "jax>=0.8,<0.11",
     "optax>=0.2.5",
     "multimethod>=2.0",
+    # Both models annotate with jaxtyping at module scope.  It used to arrive
+    # via google-tunix and orbax-export; nothing declares it once tunix is gone.
+    "jaxtyping>=0.2",
+    # Lazily imported by qwen3vl/sampler.py for the image-URL path, so a missing
+    # copy fails at call time rather than import time -- worth declaring.
+    "requests>=2.31",
+    # The rest of what src/ imports directly.  These do currently arrive via
+    # jax/flax/optax/orbax/transformers, but so did pillow, jinja2 and jaxtyping
+    # until google-tunix was dropped and they vanished with it.  Policy: declare
+    # every module src/ imports, and let the lock decide versions.
+    "numpy>=1.26",
+    "safetensors>=0.4.3",
+    # No upper bound on purpose: transformers 4.x pins huggingface-hub <1 while
+    # transformers 5.x requires >=1.5, so capping here would make the 5.x path
+    # unresolvable.
+    "huggingface-hub>=0.34",
+    "absl-py>=2.0",
+    "humanize>=4.0",
 ]
 
 # Accelerator support is opt-in.  `jax[cuda12]` pulls ~4.8 GB of nvidia-*-cu12
@@ -67,9 +101,13 @@ dev = [
     "ruff>=0.13.1",
     "ty>=0.0.76",
 ]
+# Needed by experiments/ and examples/, not by the library itself.  qwix and
+# grain used to arrive transitively via tunix; naming them here keeps those
+# scripts installable now that tunix is gone.
 extra = [
-    "pillow>=11.2.1",
     "datasets>=4.1.1",
+    "qwix>=0.1.6",
+    "grain>=0.2.17",
 ]
 # Cross-framework consistency checks (JAX vs HuggingFace) only.  Deliberately
 # NOT in default-groups: torch's CUDA build ships nvidia-*-cu13 wheels that

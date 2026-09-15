@@ -1,13 +1,29 @@
 """Dump HuggingFace Qwen3.5 reference activations to an .npz (torch side).
 
 Run this in an environment that has transformers >= 5.17 and torch; it writes a
-golden file that ``qwen3_5_consistency_test.py`` then compares against in the
+golden file that ``qwen3_5_consistency.py`` then compares against in the
 JAX environment.  The two are split deliberately: the project's JAX stack pins
 transformers 4.57 (which has no ``qwen3_5``), and installing the newer
 transformers + CUDA torch into that environment has broken it before.
 
-    <hfref-venv>/bin/python tests/qwen3_5_dump_hf_reference.py \
-        --model Qwen/Qwen3.5-0.8B --out /tmp/qwen3_5_ref.npz
+    /data/hfref-venv/bin/python crosscheck/qwen3_5_dump_hf_reference.py \
+        --model Qwen/Qwen3.5-0.8B --dtype float32 \
+        --out /data/consistency-tests/qwen3_5_0_8b_fp32.npz
+
+Both paths live under ``/data`` on purpose: it is the only mount that survives a
+devcontainer rebuild.  Golden files written to /tmp or the session scratchpad
+have been lost to a rebuild before, and regenerating one costs a fresh venv plus
+a full fp32 CPU forward pass.
+
+If ``/data/hfref-venv`` is missing, recreate it -- note the CPU torch wheel,
+which matters: the CUDA wheel pulls nvidia-cudnn-cu13, whose libcudnn.so.9
+overwrites the cu12 copy that this project's JAX needs.
+
+    uv venv /data/hfref-venv --python 3.12
+    uv pip install --python /data/hfref-venv/bin/python \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        --index-strategy unsafe-best-match \
+        "transformers>=5.17" torch accelerate numpy
 """
 
 import argparse

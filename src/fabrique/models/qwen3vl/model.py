@@ -26,8 +26,6 @@ import numpy as np
 from flax import nnx
 from jax import numpy as jnp
 from jax.interpreters import pxla
-from tunix.generate.mappings import BackendMappingMixin
-from tunix.utils import compat, env_utils
 
 from fabrique.models.qwen3vl.vision import (
     VisionEmbeddings,
@@ -36,8 +34,9 @@ from fabrique.models.qwen3vl.vision import (
     VisionModelConfig,
     attention_impl_kwargs,
 )
+from fabrique.utils import setup_sharding_environment
 
-env_utils.setup_sharding_environment()
+setup_sharding_environment()
 
 
 K_MASK = -2.3819763e38
@@ -842,7 +841,7 @@ class DecoderLayer(nnx.Module):
         return cache, outputs
 
 
-class Qwen3VL(BackendMappingMixin, nnx.Module):
+class Qwen3VL(nnx.Module):
     """Qwen3-VL model."""
 
     def __init__(
@@ -860,7 +859,7 @@ class Qwen3VL(BackendMappingMixin, nnx.Module):
             shd_config=shd_config,
             param_dtype=config.param_dtype,
         )
-        self.layers = compat.ModuleList(
+        self.layers = nnx.List(
             [
                 DecoderLayer(config=config, rngs=rngs, shd_config=shd_config)
                 for _ in range(config.num_layers)
@@ -1052,7 +1051,7 @@ class Qwen3VL(BackendMappingMixin, nnx.Module):
         # is what both transformers (`layer_idx in range(len(embeds))`) and vLLM do.
         # Confirmed by teacher-forced agreement with this checkpoint's vLLM output
         # over 8434 token positions: 96.9% here vs 95.7% when injecting at
-        # 5/11/17, better on every document (tests/qwen3vl_teacher_forcing_parity.py).
+        # 5/11/17, better on every document (crosscheck/qwen3vl_teacher_forcing_parity.py).
         deepstack_map = dict(enumerate(deepstack))
         for i, layer in enumerate(self.layers):
             layer_name = f"layer_{i}"

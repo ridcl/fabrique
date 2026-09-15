@@ -1,15 +1,98 @@
+# Explicit build backend.  Without a [build-system] table two things happen
+# implicitly: PEP 517 falls back to setuptools (whose auto-discovery packaged the
+# gitignored `_main.py` scratch files into the wheel), and uv treats the project
+# as "virtual" -- installing dependencies but never fabrique itself.
+#
+# hatchling is chosen over setuptools because its file selection is declarative:
+# what ships is exactly what is listed below, rather than whatever auto-discovery
+# happens to sweep up.
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# `_main*` are scratch entry points (two of the three are ignored, one via
+# .git/info/exclude which hatchling cannot see), so exclude them by name rather
+# than relying on ignore-file semantics.
+[tool.hatch.build.targets.wheel]
+packages = ["src/fabrique"]
+exclude = ["_main.py", "_main.hy"]
+
+# Keep the sdist to what is needed to rebuild the wheel.  Hatchling otherwise
+# ships everything not gitignored -- crosscheck/, experiments/, .devcontainer/,
+# the Dockerfile and uv.lock -- which is the opposite of the reason those live
+# outside the package.
+[tool.hatch.build.targets.sdist]
+# only-include, not include: `include` merely adds to hatchling's default
+# (everything not gitignored), whereas only-include restricts to this list.
+# pyproject.toml and PKG-INFO are added automatically.
+only-include = ["src/fabrique", "README.md", "LICENSE"]
+exclude = ["**/_main.py", "**/_main.hy"]
+
 [project]
 name = "fabrique"
 version = "0.5.0"
 description = "Foundation for modern ML research"
 readme = "README.md"
 requires-python = ">=3.12"
+# These are *constraints*, not pins: they say what fabrique can work with, so it
+# co-resolves with a consumer's other packages.  The exact versions this project
+# actually runs on are pinned in uv.lock, which is committed -- see the comment
+# on [tool.uv] below.  Do not add `==` pins here; that is what broke downstream
+# resolvability, and the lock already gives reproducibility.
 dependencies = [
-    "google-tunix[prod]==0.1.6",
-    "flax==0.12.6",
+    "flax>=0.12,<0.13",
+    # Tokenizer / image-processor loading only -- fabrique never runs a
+    # transformers model, and does not need torch for this: transformers 5 does
+    # not depend on torch, and qwen3vl/loading.py deliberately bypasses the
+    # Auto* processor classes (which are torch-gated regardless of backend) to
+    # assemble the tokenizer and the PIL-backend image processor by hand.
+    # Bounded at <6 only because 5.x is what has been tested end to end; 5's
+    # PIL backend is bit-identical to 4.57's processor on input_ids,
+    # pixel_values and image_grid_thw.
+    "transformers>=4.57,<6",
+    # Chat templates.  transformers declares jinja2 only under its
+    # `chat-template`/`all` extras, so without this `apply_chat_template`
+    # raises ImportError.  It used to arrive transitively via google-tunix.
+    "jinja2>=3.1",
+    # The image processor is the PIL/NumPy one on every supported transformers
+    # version, and both import `PILImageResampling`, which transformers only
+    # defines when Pillow is installed.  Also previously transitive via tunix.
+    "pillow>=11.2.1",
+    # Real incompatibility, not a preference: flax uses jax.core.Effect, which
+    # jax 0.11 removed.  flax itself only declares `jax>=0.8.1`, so without this
+    # bound a resolver happily picks 0.11.x and nothing imports.  It belongs in
+    # metadata precisely so a downstream resolver knows about it too.
+    "jax>=0.8,<0.11",
     "optax>=0.2.5",
     "multimethod>=2.0",
+    # Both models annotate with jaxtyping at module scope.  It used to arrive
+    # via google-tunix and orbax-export; nothing declares it once tunix is gone.
+    "jaxtyping>=0.2",
+    # Lazily imported by qwen3vl/sampler.py for the image-URL path, so a missing
+    # copy fails at call time rather than import time -- worth declaring.
+    "requests>=2.31",
+    # The rest of what src/ imports directly.  These do currently arrive via
+    # jax/flax/optax/orbax/transformers, but so did pillow, jinja2 and jaxtyping
+    # until google-tunix was dropped and they vanished with it.  Policy: declare
+    # every module src/ imports, and let the lock decide versions.
+    "numpy>=1.26",
+    "safetensors>=0.4.3",
+    # No upper bound on purpose: transformers 4.x pins huggingface-hub <1 while
+    # transformers 5.x requires >=1.5, so capping here would make the 5.x path
+    # unresolvable.
+    "huggingface-hub>=0.34",
+    "absl-py>=2.0",
+    "humanize>=4.0",
 ]
+
+# Accelerator support is opt-in.  `jax[cuda12]` pulls ~4.8 GB of nvidia-*-cu12
+# wheels and hard-forces CUDA 12, so it must never sit in `dependencies` -- that
+# would break every CPU, TPU, ROCm, Metal and CUDA 13 consumer.  Choosing a
+# backend is the deployment's job:  pip install fabrique[cuda12]
+[project.optional-dependencies]
+cuda12 = ["jax[cuda12]"]
+cuda13 = ["jax[cuda13]"]
+tpu = ["jax[tpu]"]
 
 [dependency-groups]
 dev = [
@@ -18,9 +101,13 @@ dev = [
     "ruff>=0.13.1",
     "ty>=0.0.76",
 ]
+# Needed by experiments/ and examples/, not by the library itself.  qwix and
+# grain used to arrive transitively via tunix; naming them here keeps those
+# scripts installable now that tunix is gone.
 extra = [
-    "pillow>=11.2.1",
     "datasets>=4.1.1",
+    "qwix>=0.1.6",
+    "grain>=0.2.17",
 ]
 # Cross-framework consistency checks (JAX vs HuggingFace) only.  Deliberately
 # NOT in default-groups: torch's CUDA build ships nvidia-*-cu13 wheels that
@@ -36,6 +123,13 @@ crosscheck = [
 ]
 
 
+# uv.lock IS the environment pin, and it is committed on purpose (it used to be
+# in .gitignore *and* .dockerignore, so `COPY . /app` dropped it and the
+# Dockerfile's `uv lock` re-resolved against latest PyPI on every build -- which
+# is how jaxlib 0.11.1 got in three times).  The Dockerfile now runs
+# `uv sync --locked`, which fails loudly if this lock and pyproject.toml have
+# drifted apart.  Upgrade deliberately: `uv lock --upgrade-package flax`.
+# Note lockfiles never ship in the wheel/sdist, so this costs consumers nothing.
 [tool.uv]
 default-groups = ["dev", "extra"]
 
@@ -51,6 +145,15 @@ torch = { index = "pytorch-cpu" }
 torchvision = { index = "pytorch-cpu" }
 
 
+# `tests` is the pytest suite and nothing else: pure-JAX, runs in the default
+# environment, safe for CI.  One-off cross-framework checks live in `crosscheck/`
+# and must never be collected -- they need torch, which CI does not install.
+# `reference/` is a vendored read-only checkout (gitignored) with its own,
+# unrunnable test tree.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["reference", "build", "dist", "output", "crosscheck", ".git"]
+
 [tool.ruff]
 target-version = "py312"
 extend-exclude = ["reference", "build", "dist", "output"]
@@ -64,13 +167,18 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Experiments and tests set sys.path / env before importing, so imports cannot
-# all sit at the top of the file.
+# Experiments, tests and cross-framework checks set sys.path / env before
+# importing, so imports cannot all sit at the top of the file.  Note ruff still
+# lints crosscheck/ -- it never resolves imports, so absent torch is a non-issue.
 "experiments/*" = ["E402"]
 "tests/*" = ["E402"]
+"crosscheck/*" = ["E402"]
 
 [tool.ty.environment]
 python = "/venv"
 
+# `crosscheck` is excluded because those scripts import torch/torchvision, which
+# are NOT installed in the default environment (see the `crosscheck` dependency
+# group above) -- without this, every default-env run reports unresolved imports.
 [tool.ty.src]
-exclude = ["reference", "build", "dist", "output"]
+exclude = ["reference", "build", "dist", "output", "crosscheck"]

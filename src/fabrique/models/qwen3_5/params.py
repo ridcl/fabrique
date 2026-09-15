@@ -1,17 +1,9 @@
 """Loading and converting Qwen3.5 PyTorch weights into the JAX model."""
 
-import glob
-import logging
-import os
-import re
-import shutil
-
 import jax
 import jax.numpy as jnp
-import numpy as np
-from flax import nnx
-from safetensors import safe_open
 
+from fabrique import safetensors_io
 from fabrique.models.qwen3_5 import model as model_lib
 
 
@@ -126,103 +118,20 @@ def create_model_from_safe_tensors(
 ) -> model_lib.Qwen3_5:
     """Load a Qwen3.5 checkpoint into the JAX model.
 
-    Does not use ``tunix.models.safetensors_loader``: that loader reads the
-    dtype of the *first* tensor in the header and applies its itemsize to every
-    tensor in the file.  Qwen3.5 checkpoints are mixed-dtype -- the DeltaNet
-    ``A_log`` and ``dt_bias`` are float32 while everything else is bfloat16 --
-    and the first header entry happens to be an ``A_log``, so every bfloat16
-    tensor comes back with half its elements.  ``safe_open`` resolves dtypes per
-    tensor, so we go through it directly.
+    Qwen3.5 checkpoints are mixed-dtype -- the DeltaNet ``A_log`` and
+    ``dt_bias`` are float32 while everything else is bfloat16 -- which is why
+    the loader resolves dtypes per tensor and exempts float32 tensors from the
+    ``dtype`` cast.  See ``fabrique.safetensors_io``.
     """
-    files = sorted(glob.glob(os.path.join(file_dir, "*.safetensors")))
-    if not files:
-        raise FileNotFoundError(f"no .safetensors files in {file_dir}")
-
-    key_map = _get_key_and_transform_mapping(config)
-    compiled = [(re.compile(pat), repl, tf) for pat, (repl, tf) in key_map.items()]
-
-    def map_key(name: str):
-        """Checkpoint key -> (jax path, transform), or None if unmapped."""
-        for pattern, repl, transform in compiled:
-            if pattern.fullmatch(name):
-                return pattern.sub(repl, name), transform
-        return None
-
-    abstract = nnx.eval_shape(
-        lambda: model_lib.Qwen3_5(config, rngs=nnx.Rngs(params=0))
+    return safetensors_io.load_and_create_model(
+        file_dir,
+        model_lib.Qwen3_5,
+        config,
+        _get_key_and_transform_mapping(config),
+        mesh=mesh,
+        dtype=dtype,
+        log_name="qwen3_5",
     )
-    graph_def, abs_state = nnx.split(abstract)
-
-    tensors: dict[str, jax.Array] = {}
-    keep_float32: set[str] = set()
-    skipped: list[str] = []
-    for path in files:
-        with safe_open(path, framework="numpy") as sf:
-            # safe_open handles are not iterable, so .keys() is the API
-            # here rather than dict sugar.
-            for name in sorted(sf.keys()):  # noqa: SIM118
-                mapped = map_key(name)
-                if mapped is None:
-                    skipped.append(name)
-                    continue
-                target, transform = mapped
-                arr = sf.get_tensor(name)
-                permute, reshape = transform if transform else (None, None)
-                if permute:
-                    arr = arr.transpose(permute)
-                if reshape:
-                    arr = arr.reshape(reshape)
-                tensors[target] = arr
-                if arr.dtype == np.float32:
-                    # Qwen3.5 checkpoints are mixed-dtype on purpose: the
-                    # DeltaNet A_log, dt_bias and gated-norm weights are stored
-                    # in float32 because they are exponentiated / passed through
-                    # softplus.  Downcasting them to the compute dtype loses
-                    # precision for no benefit, so keep whatever the checkpoint
-                    # chose.
-                    keep_float32.add(target)
-
-    if skipped:
-        logging.info(
-            "qwen3_5: skipped %d unmapped checkpoint keys (expected for the "
-            "vision tower and MTP head in a text-only port), e.g. %s",
-            len(skipped),
-            ", ".join(sorted(skipped)[:3]),
-        )
-
-    if mesh is not None:
-        sharding_tree = nnx.get_named_sharding(abs_state, mesh).to_pure_dict()
-    else:
-        device = jax.devices()[0]
-        sharding_tree = jax.tree.map(lambda _: device, abs_state.to_pure_dict())
-
-    def place(path, sharding):
-        key = ".".join(str(p.key if hasattr(p, "key") else p.idx) for p in path)
-        if key not in tensors:
-            raise KeyError(
-                f"checkpoint has no tensor for model parameter {key!r}; "
-                f"check the key mapping in {__name__}"
-            )
-        arr = tensors[key]
-        if dtype is not None and key not in keep_float32:
-            arr = arr.astype(jnp.dtype(dtype))
-        return jax.device_put(arr, sharding)
-
-    state = jax.tree.map_with_path(place, sharding_tree)
-    return nnx.merge(graph_def, state)
-
-
-def _flatten_state(tree, prefix: str = "") -> dict[str, jax.Array]:
-    """Flatten a pure-dict pytree into dotted keys matching the load mapping."""
-    out: dict[str, jax.Array] = {}
-    items = tree.items() if isinstance(tree, dict) else enumerate(tree)
-    for k, v in items:
-        key = f"{prefix}{k}"
-        if isinstance(v, (dict, list, tuple)):
-            out.update(_flatten_state(v, prefix=f"{key}."))
-        else:
-            out[key] = v
-    return out
 
 
 def save_model_as_safetensors(
@@ -231,90 +140,16 @@ def save_model_as_safetensors(
     source_dir: str,
     output_dir: str,
 ) -> str:
-    """Write a trained model back out in HuggingFace layout.
+    """Write a trained Qwen3.5 model back out in HuggingFace layout.
 
-    Iterates the *source* checkpoint's keys rather than inverting the load
-    regexes, which guarantees the exported file has exactly the keys, shapes and
-    dtypes the original had.  Tensors this port does not model -- the vision
-    tower and the MTP head -- are copied through untouched, so the result loads
-    as the same architecture the checkpoint declares (vLLM can serve it
-    directly); only the text weights differ.
-
-    Returns the output directory.
+    The vision tower and MTP head this port does not model are copied through
+    untouched, so the export loads as the architecture the checkpoint declares
+    and vLLM can serve it directly.  Returns the output directory.
     """
-    from safetensors.numpy import save_file
-
-    os.makedirs(output_dir, exist_ok=True)
-    key_map = _get_key_and_transform_mapping(config)
-    compiled = [(re.compile(pat), repl, tf) for pat, (repl, tf) in key_map.items()]
-    state = _flatten_state(nnx.to_pure_dict(nnx.state(model, nnx.Param)))
-
-    files = sorted(glob.glob(os.path.join(source_dir, "*.safetensors")))
-    if not files:
-        raise FileNotFoundError(f"no .safetensors files in {source_dir}")
-
-    tensors: dict[str, np.ndarray] = {}
-    n_trained, n_passthrough = 0, 0
-    for path in files:
-        with safe_open(path, framework="numpy") as sf:
-            for name in sorted(sf.keys()):  # noqa: SIM118
-                target, transform = None, None
-                for pattern, repl, tf in compiled:
-                    if pattern.fullmatch(name):
-                        target, transform = pattern.sub(repl, name), tf
-                        break
-                original = sf.get_tensor(name)
-                if target is None or target not in state:
-                    tensors[name] = original  # vision tower, MTP, ...
-                    n_passthrough += 1
-                    continue
-                arr = np.asarray(state[target])
-                permute, reshape = transform if transform else (None, None)
-                # Undo load-time (permute -> reshape) in reverse order.
-                if reshape is not None:
-                    shape = (
-                        tuple(np.asarray(original.shape)[list(permute)])
-                        if permute
-                        else original.shape
-                    )
-                    arr = arr.reshape(shape)
-                if permute:
-                    arr = arr.transpose(np.argsort(permute))
-                if arr.shape != original.shape:
-                    raise ValueError(
-                        f"{name}: exported shape {arr.shape} != checkpoint "
-                        f"{original.shape}"
-                    )
-                # ascontiguousarray is essential: transpose returns a strided
-                # view, and save_file writes the underlying buffer without
-                # honouring strides -- producing a file with correct shapes and
-                # silently transposed contents.
-                tensors[name] = np.ascontiguousarray(arr.astype(original.dtype))
-                n_trained += 1
-
-    save_file(tensors, os.path.join(output_dir, "model.safetensors"))
-
-    # Copy the files a server needs alongside the weights.  The source index
-    # names sharded files that no longer exist, so it is deliberately skipped.
-    for fname in (
-        "config.json",
-        "generation_config.json",
-        "tokenizer.json",
-        "tokenizer_config.json",
-        "vocab.json",
-        "merges.txt",
-        "chat_template.jinja",
-        "preprocessor_config.json",
-        "video_preprocessor_config.json",
-    ):
-        src = os.path.join(source_dir, fname)
-        if os.path.exists(src):
-            shutil.copy2(src, os.path.join(output_dir, fname))
-
-    logging.info(
-        "qwen3_5: wrote %d trained + %d passed-through tensors to %s",
-        n_trained,
-        n_passthrough,
+    return safetensors_io.save_model_as_safetensors(
+        model,
+        _get_key_and_transform_mapping(config),
+        source_dir,
         output_dir,
+        log_name="qwen3_5",
     )
-    return output_dir

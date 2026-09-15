@@ -1,6 +1,6 @@
 """Parity test for the Qwen3-VL incremental decode path.
 
-``consistency_test.py`` compares the JAX model against HuggingFace, but only for
+``crosscheck/qwen3vl_consistency.py`` compares the JAX model against HuggingFace, but only for
 a *full forward pass* — it never exercises the KV cache.  That let a decode bug
 through: the decode step built its attention mask as ``cache_pos <= end_index``,
 attending to every filled cache slot including the left-padding written during

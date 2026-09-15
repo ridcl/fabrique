@@ -14,7 +14,7 @@
 
 """Utilities for saving models with merged LoRA weights in safetensors format.
 
-Fixes the upstream tunix saver which assumes a single model.safetensors file.
+Written to replace tunix's saver, which assumed a single model.safetensors file.
 Larger models (e.g. Qwen3-VL-4B) are sharded across multiple files described
 by model.safetensors.index.json; this module handles both cases.
 """
@@ -62,7 +62,7 @@ def save_lora_merged_model_as_safetensors(
         alpha: LoRA alpha used during training.
         state_key_transform_fn: Converts internal layer paths to safetensors keys.
         custom_layer_extractor_fn: Optional post-processing hook for the LoRA
-            layer dict (same semantics as the upstream tunix version).
+            layer dict (same semantics as the tunix version this replaced).
         transpose_rules: Optional mapping from key substring to transpose axes,
             applied to the merged delta before adding to the base weight.
     """

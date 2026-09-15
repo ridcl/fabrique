@@ -25,15 +25,15 @@ import jaxtyping
 from flax import nnx
 from jax import numpy as jnp
 from jax.interpreters import pxla
-from tunix.utils import compat, env_utils
 
 # The cuDNN-probing helper lives in the qwen3vl package; it is model-agnostic and
 # subtle enough (a mismatched cuDNN fails only at runtime) that duplicating it
 # would be worse than the cross-package import.  Candidate for extraction into a
 # shared module if a third model needs it.
 from fabrique.models.qwen3vl.vision import attention_impl_kwargs
+from fabrique.utils import setup_sharding_environment
 
-env_utils.setup_sharding_environment()
+setup_sharding_environment()
 
 LayerCache = dict[str, jaxtyping.Array]
 Cache = dict[str, LayerCache]
@@ -954,7 +954,7 @@ class Qwen3_5(nnx.Module):
             shd_config=shd_config,
             param_dtype=config.param_dtype,
         )
-        self.layers = compat.ModuleList(
+        self.layers = nnx.List(
             [
                 DecoderLayer(config, i, rngs=rngs, shd_config=shd_config)
                 for i in range(config.num_layers)

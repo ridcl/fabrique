@@ -2,12 +2,16 @@
 
 Unlike the sibling qwen3vl test, this does not import torch.  The project's JAX
 environment pins transformers 4.57, which has no ``qwen3_5``, so the reference
-is produced separately by ``tests/qwen3_5_dump_hf_reference.py`` in an isolated
+is produced separately by ``crosscheck/qwen3_5_dump_hf_reference.py`` in an isolated
 environment and compared here from an .npz.  That also keeps the check fast
 (no second copy of the model) and reproducible.
 
-    python -m fabrique.models.qwen3_5.consistency_test \
-        --model Qwen/Qwen3.5-0.8B --ref /path/to/qwen3_5_ref.npz
+    python crosscheck/qwen3_5_consistency.py \
+        --model Qwen/Qwen3.5-0.8B --dtype float32 \
+        --ref /data/consistency-tests/qwen3_5_0_8b_fp32.npz
+
+    Golden files live in /data/consistency-tests (survives container
+    rebuilds); regenerate with crosscheck/qwen3_5_dump_hf_reference.py.
 
 Exits 0 when every layer and the logits agree within tolerance.
 """

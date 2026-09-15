@@ -12,8 +12,8 @@ are coloured by what actually went wrong, which is the thing you want to see:
 
 Two dumps can be drawn side by side (e.g. JAX vs vLLM) for the same page.
 
-    python tests/doc_vqa_visualize.py --dump output/doc_vqa_eval/eval100.json --n 100
-    python tests/doc_vqa_visualize.py --dump output/doc_vqa_eval/records6_mask.json \
+    python experiments/doc_vqa_visualize.py --dump output/doc_vqa_eval/eval100.json --n 100
+    python experiments/doc_vqa_visualize.py --dump output/doc_vqa_eval/records6_mask.json \
         --compare output/doc_vqa_eval/records_vllm.json --n 5
 """
 

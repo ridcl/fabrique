@@ -26,11 +26,7 @@ from flax import nnx
 from jax import numpy as jnp
 from jax.interpreters import pxla
 
-# The cuDNN-probing helper lives in the qwen3vl package; it is model-agnostic and
-# subtle enough (a mismatched cuDNN fails only at runtime) that duplicating it
-# would be worse than the cross-package import.  Candidate for extraction into a
-# shared module if a third model needs it.
-from fabrique.models.qwen3vl.vision import attention_impl_kwargs
+from fabrique import attention as attention_lib
 from fabrique.utils import setup_sharding_environment
 
 setup_sharding_environment()
@@ -129,7 +125,16 @@ class ModelConfig:
     use_tied_embedding: bool = True
     # execution
     mamba_ssm_dtype: jnp.dtype = jnp.float32
+    # DeltaNet chunking: a pure performance knob (outputs agree to rounding).
+    # The chunk loop is a lax.scan of L / chunk_size steps; unroll lets XLA
+    # fuse that many steps per loop iteration without growing the program
+    # with sequence length.  Measured fwd+bwd at 8k on an RTX 3090:
+    # (64, 1) 26.7 ms, (128, 1) 22.8 ms, (128, 4) 21.4 ms.
     gdn_chunk_size: int = 64
+    gdn_scan_unroll: int = 1
+    # Full-attention kernel: None picks per device (see fabrique.attention);
+    # "cudnn" / "pallas" / "xla" force one, e.g. "xla" for parity checks.
+    attention_impl: str | None = None
     param_dtype: jnp.dtype = jnp.bfloat16
     shd_config: ShardingConfig = ShardingConfig.get_default_sharding()
     remat_config: RematConfig = RematConfig.NONE
@@ -433,26 +438,6 @@ def apply_rope(
     return jnp.concatenate([rotated, x_pass], axis=-1).astype(x.dtype)
 
 
-def make_causal_mask(
-    seq_len: int,
-    batch_size: int,
-    padding_mask: jaxtyping.Array | None = None,
-) -> jaxtyping.Array:
-    """Lower-triangular mask by *sequence index*, plus optional padding.
-
-    Causality is by position in the sequence, matching HF's
-    ``create_causal_mask`` (which derives it from ``cache_position``).  See the
-    sibling qwen3vl package for why keying this off M-RoPE positions instead is
-    a bug.
-    """
-    idx = jnp.arange(seq_len)
-    mask = idx[None, None, :] <= idx[None, :, None]
-    mask = jnp.broadcast_to(mask, (batch_size, seq_len, seq_len))
-    if padding_mask is not None:
-        mask = mask & padding_mask[:, None, :].astype(jnp.bool_)
-    return mask
-
-
 # ---------------------------------------------------------------------------
 # Gated DeltaNet
 # ---------------------------------------------------------------------------
@@ -481,6 +466,50 @@ def causal_conv1d(
     return jax.nn.silu(out) if activation else out
 
 
+def unit_lower_triangular_inverse(
+    a: jaxtyping.Array, base: int = 16
+) -> jaxtyping.Array:
+    """Inverse of ``I + tril(a, -1)`` over the last two axes, using matmuls only.
+
+    Block forward substitution: invert the two diagonal halves recursively
+    (batched together), then fill the off-diagonal block with
+    ``-X22 @ M21 @ X11``.  At ``base`` size, each row is solved by the fixed-
+    point step ``X <- I - M @ X``: row ``i`` of ``X`` depends only on rows
+    ``< i``, so it becomes exact after ``i`` steps and is untouched afterwards
+    -- this is forward substitution, just vectorised.  Rounding therefore
+    behaves like a triangular solve.
+
+    This is NOT the "matmul inverse" ``prod_j (I + M^(2^j))``: that series is
+    algebraically exact for nilpotent M, but the powers M^(2^j) of a 64x64
+    strictly-lower-triangular matrix with O(1) entries grow combinatorially and
+    destroy the result in float32.  It looks fine at small chunk sizes, which
+    makes it a trap.  Nothing here forms a power of M.
+
+    Every matmul runs at HIGHEST precision: the GPU default for float32 is
+    TF32 (~3e-4 relative error), which compounds through the recursion.
+    """
+    n = a.shape[-1]
+    m = jnp.tril(a, -1)
+    eye = jnp.eye(n, dtype=a.dtype)
+    hi = functools.partial(jnp.matmul, precision=jax.lax.Precision.HIGHEST)
+    if n <= base:
+        x = jnp.broadcast_to(eye, m.shape)
+        for _ in range(n - 1):
+            x = eye - hi(m, x)
+        return x
+    if n % 2:
+        raise ValueError(
+            f"size {n} must be <= {base} or even (chunk_size is a power of 2)"
+        )
+    h = n // 2
+    diag = jnp.stack([m[..., :h, :h], m[..., h:, h:]], axis=-3)
+    x = unit_lower_triangular_inverse(diag, base)
+    x11, x22 = x[..., 0, :, :], x[..., 1, :, :]
+    x21 = -hi(hi(x22, m[..., h:, :h]), x11)
+    top = jnp.concatenate([x11, jnp.zeros_like(x11)], axis=-1)
+    return jnp.concatenate([top, jnp.concatenate([x21, x22], axis=-1)], axis=-2)
+
+
 def chunk_gated_delta_rule(
     query: jaxtyping.Array,  # [B, L, Hv, Dk]
     key: jaxtyping.Array,  # [B, L, Hv, Dk]
@@ -491,6 +520,7 @@ def chunk_gated_delta_rule(
     chunk_size: int = 64,
     initial_state: jaxtyping.Array | None = None,
     use_qk_l2norm: bool = True,
+    scan_unroll: int = 1,
 ) -> tuple[jaxtyping.Array, jaxtyping.Array]:
     """Chunkwise gated delta rule -- the prefill/training path.
 
@@ -542,21 +572,13 @@ def chunk_gated_delta_rule(
 
     # The UT transform: solve the unit lower-triangular system (the diagonal of
     # ut_system is ignored, as in HF's solve_triangular(unitriangular=True)).
-    #
-    # Do NOT substitute the "matmul inverse" L^-1 = prod_j (I + M^(2^j)):
-    # although algebraically exact for nilpotent M, the intermediate powers
-    # M^(2^j) of a 64x64 strictly-lower-triangular matrix with O(1) entries grow
-    # combinatorially and destroy the result in float32.  It looks fine at small
-    # chunk sizes, which makes it a trap.
-    solve = functools.partial(
-        jax.lax.linalg.triangular_solve,
-        left_side=True,
-        lower=True,
-        unit_diagonal=True,
-        transpose_a=False,
-    )
-    new_values = solve(ut_system, v_beta)
-    k_cumdecay = solve(ut_system, decayed_k_beta)
+    # Invert once and multiply, rather than two triangular_solve calls: cuBLAS's
+    # batched trsm on thousands of 64x64 systems runs ~8x slower than a matmul
+    # of the same size, and was ~10% of a training step.
+    inv = unit_lower_triangular_inverse(ut_system)
+    hi = functools.partial(jnp.matmul, precision=jax.lax.Precision.HIGHEST)
+    new_values = hi(inv, v_beta)
+    k_cumdecay = hi(inv, decayed_k_beta)
 
     q = q * jnp.exp(cum_decay)[..., None]
     k = k * jnp.exp(cum_decay[..., -1:] - cum_decay)[..., None]
@@ -586,6 +608,7 @@ def chunk_gated_delta_rule(
             to_scan(t)
             for t in (new_values, k_cumdecay, q, intra_chunk_attn, k, chunk_decay)
         ),
+        unroll=scan_unroll,
     )
     out = jnp.moveaxis(out, 0, 2).reshape(batch, num_v_heads, -1, v_dim)[:, :, :seq_len]
     return jnp.swapaxes(out, 1, 2).astype(in_dtype), final_state
@@ -744,7 +767,14 @@ class GatedDeltaNet(nnx.Module):
             k = jnp.repeat(k, repeats, axis=2)
 
         core_out, _ = chunk_gated_delta_rule(
-            q, k, v, g, beta, chunk_size=self.config.gdn_chunk_size, use_qk_l2norm=True
+            q,
+            k,
+            v,
+            g,
+            beta,
+            chunk_size=self.config.gdn_chunk_size,
+            use_qk_l2norm=True,
+            scan_unroll=self.config.gdn_scan_unroll,
         )
 
         core_out = self.norm(core_out, z).reshape(batch, seq_len, self.value_dim)
@@ -820,7 +850,7 @@ class Attention(nnx.Module):
         x: jaxtyping.Array,  # [B, L, D]
         cos: jaxtyping.Array,
         sin: jaxtyping.Array,
-        attn_mask: jaxtyping.Array | None,  # [B, L, S] bool
+        padding_mask: jaxtyping.Array | None,  # [B, L], True = real token
     ) -> jaxtyping.Array:
         qg = self.q_proj(x)  # [B, L, N, H*2] (or H)
         if self.config.attn_output_gate:
@@ -840,14 +870,17 @@ class Attention(nnx.Module):
         k = shard(k, self.shd_config.act_btnh)
         v = shard(v, self.shd_config.act_btnh)
 
-        mask = jnp.expand_dims(attn_mask, -3) if attn_mask is not None else None
-        out = jax.nn.dot_product_attention(
+        # Causal by *sequence index* plus key padding, matching HF's
+        # create_causal_mask (derived from cache_position).  Keying causality
+        # off M-RoPE positions instead is a bug -- see the qwen3vl package.
+        out = attention_lib.dot_product_attention(
             q,
             k,
             v,
-            mask=mask,
+            causal=True,
+            padding_mask=padding_mask,
             scale=self.scale,
-            **attention_impl_kwargs(q.dtype, self.head_dim),
+            implementation=self.config.attention_impl,
         )
         if gate is not None:
             out = out.reshape(*x.shape[:-1], -1) * jax.nn.sigmoid(gate)
@@ -920,7 +953,6 @@ class DecoderLayer(nnx.Module):
         x: jaxtyping.Array,
         cos: jaxtyping.Array,
         sin: jaxtyping.Array,
-        attn_mask: jaxtyping.Array | None,
         padding_mask: jaxtyping.Array | None,
     ) -> jaxtyping.Array:
         residual = x
@@ -928,7 +960,7 @@ class DecoderLayer(nnx.Module):
         if self.block_type == LINEAR_ATTENTION:
             h = self.linear_attn(h, padding_mask)
         else:
-            h = self.attn(h, cos, sin, attn_mask)
+            h = self.attn(h, cos, sin, padding_mask)
         x = residual + h
         residual = x
         x = residual + self.mlp(self.post_attention_layernorm(x))
@@ -1012,17 +1044,13 @@ class Qwen3_5(nnx.Module):
             rope_theta=self.config.rope_theta,
             mrope_section=self.config.mrope_section,
         )
-        attn_mask = make_causal_mask(seq_len, batch, padding_mask)
-
         x = self.embedder.encode(input_tokens)
         hidden_states = [] if output_hidden_states else None
         for layer in self.layers:
             if self.config.remat_config == RematConfig.BLOCK:
-                x = nnx.remat(lambda m, *a: m(*a))(
-                    layer, x, cos, sin, attn_mask, padding_mask
-                )
+                x = nnx.remat(lambda m, *a: m(*a))(layer, x, cos, sin, padding_mask)
             else:
-                x = layer(x, cos, sin, attn_mask, padding_mask)
+                x = layer(x, cos, sin, padding_mask)
             if output_hidden_states:
                 hidden_states.append(x)
         x = self.final_norm(x)

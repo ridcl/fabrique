@@ -27,6 +27,8 @@ from jax import numpy as jnp
 from jax.interpreters import pxla
 
 from fabrique import attention as attention_lib
+from fabrique.kernels import gated_delta as gated_delta_kernels
+from fabrique.kernels.sharding import per_batch_shard
 from fabrique.utils import setup_sharding_environment
 
 setup_sharding_environment()
@@ -39,8 +41,25 @@ FULL_ATTENTION = "full_attention"
 
 
 class RematConfig(enum.Enum):
+    """How much of the forward pass to recompute in the backward.
+
+    Measured on Qwen3.5-0.8B, LoRA, 8k tokens per RTX 3090:
+
+    * NONE      -- keep everything: 25.7 GiB, does not fit a 24 GiB card.
+    * GDN_CORE  -- recompute only the DeltaNet core (its float32 interior is
+      ~3 GiB per layer at 8k, the bulk of the activations): 1.25 s/step,
+      20.8 GiB; 29.7 GiB at 16k -- so ~1.1 GiB per extra 1k tokens.
+    * BLOCK     -- recompute every decoder layer: 1.6 s/step, 6.1 GiB, and
+      12 GiB at 32k.
+    * AUTO      -- per compiled length: GDN_CORE below
+      ``ModelConfig.remat_auto_block_len`` tokens, BLOCK from there on.  Each
+      padded length is its own compilation anyway, so this costs nothing.
+    """
+
     NONE = "none"
     BLOCK = "block"
+    GDN_CORE = "gdn_core"
+    AUTO = "auto"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -131,13 +150,17 @@ class ModelConfig:
     # with sequence length.  Measured fwd+bwd at 8k on an RTX 3090:
     # (64, 1) 26.7 ms, (128, 1) 22.8 ms, (128, 4) 21.4 ms.
     gdn_chunk_size: int = 64
-    gdn_scan_unroll: int = 1
+    gdn_scan_unroll: int = 1  # scan path only
+    # DeltaNet chunk recurrence: None picks per device -- the fused Pallas
+    # kernel on sm80+ GPUs, lax.scan elsewhere; "pallas" / "scan" force one.
+    gdn_recurrence: str | None = None
     # Full-attention kernel: None picks per device (see fabrique.attention);
     # "cudnn" / "pallas" / "xla" force one, e.g. "xla" for parity checks.
     attention_impl: str | None = None
     param_dtype: jnp.dtype = jnp.bfloat16
     shd_config: ShardingConfig = ShardingConfig.get_default_sharding()
     remat_config: RematConfig = RematConfig.NONE
+    remat_auto_block_len: int = 8192  # RematConfig.AUTO switches to BLOCK here
 
     def __post_init__(self):
         if not self.layer_types:
@@ -510,6 +533,35 @@ def unit_lower_triangular_inverse(
     return jnp.concatenate([top, jnp.concatenate([x21, x22], axis=-1)], axis=-2)
 
 
+def _remat_mode(config: ModelConfig, seq_len: int) -> RematConfig:
+    """Resolve RematConfig.AUTO for a (static) sequence length."""
+    mode = config.remat_config
+    if mode == RematConfig.AUTO:
+        long = seq_len >= config.remat_auto_block_len
+        return RematConfig.BLOCK if long else RematConfig.GDN_CORE
+    return mode
+
+
+def _select_recurrence(
+    impl: str | None, chunk_size: int, k_dim: int, v_dim: int
+) -> str:
+    """The fused kernel on GPUs that run Triton tensor-core dots, else the scan."""
+    if impl is not None:
+        if impl not in ("pallas", "scan"):
+            raise ValueError(
+                f"recurrence_impl must be 'pallas' or 'scan', got {impl!r}"
+            )
+        return impl
+    pow2 = lambda n: n >= 16 and not n & (n - 1)  # noqa: E731
+    try:
+        d = jax.devices()[0]
+    except RuntimeError:
+        return "scan"
+    gpu = d.platform == "gpu" and float(getattr(d, "compute_capability", "0")) >= 8.0
+    ok = pow2(chunk_size) and pow2(k_dim) and v_dim % 32 == 0
+    return "pallas" if gpu and ok else "scan"
+
+
 def chunk_gated_delta_rule(
     query: jaxtyping.Array,  # [B, L, Hv, Dk]
     key: jaxtyping.Array,  # [B, L, Hv, Dk]
@@ -521,13 +573,16 @@ def chunk_gated_delta_rule(
     initial_state: jaxtyping.Array | None = None,
     use_qk_l2norm: bool = True,
     scan_unroll: int = 1,
+    recurrence_impl: str | None = None,
 ) -> tuple[jaxtyping.Array, jaxtyping.Array]:
     """Chunkwise gated delta rule -- the prefill/training path.
 
     Port of HF ``torch_chunk_gated_delta_rule``.  The sequential dependency runs
-    over *chunks* (L / chunk_size steps) rather than tokens, and is expressed as
-    a single ``lax.scan``, so the emitted jaxpr has a fixed size regardless of
-    sequence length -- nothing is unrolled per token.
+    over *chunks* (L / chunk_size steps) rather than tokens.  It is either a
+    fused Pallas kernel (``fabrique.kernels.gated_delta``; GPU) or a single
+    ``lax.scan`` -- in both cases the emitted program has a fixed size
+    regardless of sequence length; nothing is unrolled per token.
+    ``recurrence_impl`` is "pallas", "scan", or None to pick per device.
 
     Returns ``(output [B, L, Hv, Dv], final_state [B, Hv, Dk, Dv])``.
     """
@@ -589,6 +644,35 @@ def chunk_gated_delta_rule(
         if initial_state is None
         else initial_state.astype(jnp.float32)
     )
+
+    if _select_recurrence(recurrence_impl, chunk_size, k_dim, v_dim) == "pallas":
+
+        def recur(nv, kcd, kk, cd, s0):  # one batch shard: [b, H, ...]
+            b = nv.shape[0]
+            flat = lambda t: t.reshape(b * num_v_heads, -1, t.shape[-1])  # noqa: E731
+            st, vn, fin = gated_delta_kernels.recurrence(
+                flat(nv),
+                flat(kcd),
+                flat(kk),
+                cd.reshape(b * num_v_heads, num_chunks),
+                s0.reshape(b * num_v_heads, k_dim, v_dim),
+                chunk_size,
+            )
+            return (
+                st.reshape(b, num_v_heads, num_chunks, k_dim, v_dim),
+                vn.reshape(b, num_v_heads, num_chunks, chunk_size, v_dim),
+                fin.reshape(b, num_v_heads, k_dim, v_dim),
+            )
+
+        # per_batch_shard: XLA cannot partition the kernel; see that module.
+        states, v_new, final_state = per_batch_shard(recur, 5)(
+            new_values, k_cumdecay, k, chunk_decay, state0
+        )
+        # With every chunk's starting state known, the outputs are two batched
+        # matmuls over all chunks at once -- no sequential dependency left.
+        out = q @ states + intra_chunk_attn @ v_new
+        out = out.reshape(batch, num_v_heads, -1, v_dim)[:, :, :seq_len]
+        return jnp.swapaxes(out, 1, 2).astype(in_dtype), final_state
 
     def step(state, xs):
         nv, kcd, q_i, intra_i, k_i, decay_i = xs
@@ -766,16 +850,16 @@ class GatedDeltaNet(nnx.Module):
             q = jnp.repeat(q, repeats, axis=2)
             k = jnp.repeat(k, repeats, axis=2)
 
-        core_out, _ = chunk_gated_delta_rule(
-            q,
-            k,
-            v,
-            g,
-            beta,
+        core = functools.partial(
+            chunk_gated_delta_rule,
             chunk_size=self.config.gdn_chunk_size,
             use_qk_l2norm=True,
             scan_unroll=self.config.gdn_scan_unroll,
+            recurrence_impl=self.config.gdn_recurrence,
         )
+        if _remat_mode(self.config, seq_len) == RematConfig.GDN_CORE:
+            core = jax.checkpoint(core)
+        core_out, _ = core(q, k, v, g, beta)
 
         core_out = self.norm(core_out, z).reshape(batch, seq_len, self.value_dim)
         return self.out_proj(core_out)
@@ -1047,7 +1131,7 @@ class Qwen3_5(nnx.Module):
         x = self.embedder.encode(input_tokens)
         hidden_states = [] if output_hidden_states else None
         for layer in self.layers:
-            if self.config.remat_config == RematConfig.BLOCK:
+            if _remat_mode(self.config, seq_len) == RematConfig.BLOCK:
                 x = nnx.remat(lambda m, *a: m(*a))(layer, x, cos, sin, padding_mask)
             else:
                 x = layer(x, cos, sin, padding_mask)

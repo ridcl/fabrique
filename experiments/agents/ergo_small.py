@@ -11,7 +11,16 @@ Device-dependent settings live in PROFILES below and are picked from the GPU
 automatically (``--profile`` to force one, ``--max-len`` to override length).
 """
 
-import argparse
+import os
+
+# Pallas/Triton kernels need some GPU memory *outside* XLA's preallocated pool
+# when they launch; with the devcontainer's 0.95 they fail with "Failed to
+# launch CUDA kernel ... CUDA_ERROR_OUT_OF_MEMORY".  0.90 is measured to work.
+# Must run before JAX initialises a backend.
+if float(os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.75")) > 0.90:
+    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.90"
+
+import argparse  # noqa: E402
 import dataclasses
 import json
 import logging
@@ -56,32 +65,44 @@ class DeviceProfile:
     max_len: int  # trajectories are truncated here (tokens)
     gdn_chunk_size: int  # DeltaNet chunking; a pure speed knob
     gdn_scan_unroll: int  # >1 trades compile time for (little) speed
-    remat: bool  # recompute layers in backward; required at these lengths
+    # What to recompute in the backward; see qwen3_5.model.RematConfig.  "auto"
+    # recomputes only the DeltaNet core below remat_block_len tokens (~22%
+    # faster) and whole layers from there on (much less memory).
+    remat: str
+    remat_block_len: int
     note: str
 
 
 # Trajectory lengths (551 good/great): p50 10.9k, p90 17.0k, max 31.2k tokens;
 # 16k fits 88% whole, 32k fits all.
 PROFILES = {
+    # 2x RTX 3090, LoRA, per GPU: 8k 1.25 s (core-only remat, 20.8 GiB -- too
+    # close to the pool to use at 8k itself) / 1.6 s (full remat, 6.1 GiB);
+    # 16k 4.1 s, 8.2 GiB; 24k 8.8 s, 10.1 GiB; 32k 17.0 s, 12.0 GiB.
     "rtx3090": DeviceProfile(
         max_len=16384,
-        gdn_chunk_size=128,
+        gdn_chunk_size=64,
         gdn_scan_unroll=1,
-        remat=True,
+        remat="auto",
+        remat_block_len=8192,
         note="24 GiB; measured",
     ),
+    # Extrapolated, not measured: core-only remat at ~1.1 GiB per 1k tokens
+    # would be ~48 GiB at 32k, so it is used at every length.
     "h100": DeviceProfile(
         max_len=32768,
-        gdn_chunk_size=128,
+        gdn_chunk_size=64,
         gdn_scan_unroll=1,
-        remat=True,
+        remat="auto",
+        remat_block_len=65536,
         note="80 GiB; NOT yet measured -- extrapolated from the 3090",
     ),
     "cpu": DeviceProfile(
         max_len=1024,
         gdn_chunk_size=64,
         gdn_scan_unroll=1,
-        remat=True,
+        remat="block",
+        remat_block_len=0,
         note="smoke tests only",
     ),
 }
@@ -358,8 +379,8 @@ def main() -> None:
 
     # --- model ------------------------------------------------------------
     config = model_lib.ModelConfig.from_hf_config(model_dir)
-    if profile.remat:
-        config.remat_config = model_lib.RematConfig.BLOCK
+    config.remat_config = model_lib.RematConfig(profile.remat)
+    config.remat_auto_block_len = profile.remat_block_len
     config.gdn_chunk_size = profile.gdn_chunk_size
     config.gdn_scan_unroll = profile.gdn_scan_unroll
     config, model = load_model(model_dir, dtype=jnp.bfloat16, config=config)

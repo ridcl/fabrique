@@ -37,7 +37,8 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import jaxtyping
-from jax.sharding import PartitionSpec as P
+
+from fabrique.kernels.sharding import per_batch_shard
 
 logger = logging.getLogger(__name__)
 
@@ -183,21 +184,6 @@ def _pallas_attention(q, k, v, padding_mask, scale):
     return out[:, :seq_len]
 
 
-def _shard_over_mesh(fn, n_args: int):
-    """Run ``fn`` per batch shard when a mesh is set (see module docstring)."""
-    mesh = jax.sharding.get_abstract_mesh()
-    if mesh.empty:
-        return fn
-    batch = P(mesh.axis_names)
-    return jax.shard_map(
-        fn,
-        in_specs=(batch,) * n_args,
-        out_specs=batch,
-        # The Pallas op does not annotate how its outputs vary over mesh axes.
-        check_vma=False,
-    )
-
-
 def dot_product_attention(
     q: jaxtyping.Array,  # [B, T, N, H]
     k: jaxtyping.Array,  # [B, S, K, H], N % K == 0
@@ -221,13 +207,11 @@ def dot_product_attention(
 
     if backend == "pallas":
         if padding_mask is None:
-            fn = _shard_over_mesh(
+            fn = per_batch_shard(
                 lambda q, k, v: _pallas_attention(q, k, v, None, scale), 3
             )
             return fn(q, k, v)
-        fn = _shard_over_mesh(
-            lambda q, k, v, m: _pallas_attention(q, k, v, m, scale), 4
-        )
+        fn = per_batch_shard(lambda q, k, v, m: _pallas_attention(q, k, v, m, scale), 4)
         return fn(q, k, v, padding_mask)
 
     impl: Literal["cudnn", "xla"] = "cudnn" if backend == "cudnn" else "xla"

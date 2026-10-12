@@ -23,8 +23,21 @@ import jax  # noqa: E402
 import jax.extend  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
 import numpy as np  # noqa: E402
+import pytest  # noqa: E402
 
 from fabrique.models.qwen3_5 import model as M  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _full_precision_matmuls():
+    """Compare at full float32 precision on every platform.
+
+    JAX_PLATFORMS=cpu above only takes effect if this is the first module to
+    initialise JAX; under a full pytest run an earlier GPU test wins, and on GPU
+    float32 matmuls default to TF32 (~5e-4 relative) -- above these tolerances.
+    """
+    with jax.default_matmul_precision("highest"):
+        yield
 
 
 def _inputs(batch=2, seq=64, heads=4, k_dim=16, v_dim=16, seed=0):
